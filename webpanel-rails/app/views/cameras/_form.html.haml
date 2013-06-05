@@ -1,0 +1,9 @@
+= simple_form_for @camera, :html => { :class => 'form-horizontal' } do |f|
+  = f.input :url
+  = f.input :analize_frames
+  = f.input :threshold
+  = f.input :motion_delay
+
+  .form-actions
+    = f.button :submit, :class => 'btn-primary'
+    = link_to t('.cancel', :default => t("helpers.links.cancel")), cameras_path, :class => 'btn'
