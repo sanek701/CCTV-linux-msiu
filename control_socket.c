@@ -1,26 +1,26 @@
-#include "cameras.h"
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <sys/poll.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/un.h>
+#include "cameras.h"
+#include "json.h"
 
 extern struct camera *cameras;
 extern int n_cameras;
 extern int should_terminate;
-void error(const char *msg);
-void init_screen(struct screen *screen);
 
-struct sockaddr_un address, client;
-int socket_fd, connection_fd;
-socklen_t address_length;
-struct pollfd fds[10];
-int nfds = 1, on = 1, rc;
-int timeout = 5000;
-char buffer[2048];
+static struct sockaddr_un address, client;
+static int socket_fd, connection_fd;
+static socklen_t address_length;
+static struct pollfd fds[10];
+static int nfds = 1, on = 1, rc;
+static int timeout = 5000;
+static char buffer[2048];
+static unsigned int session_id = 0;
 
-struct camera** get_cams_by_ids(int *cam_ids, int ncams) {
+static struct camera** get_cams_by_ids(int *cam_ids, int ncams) {
   int i, j;
   struct camera **cams = (struct camera **)malloc(ncams * sizeof(struct camera *));
 
@@ -35,7 +35,7 @@ struct camera** get_cams_by_ids(int *cam_ids, int ncams) {
   return cams;
 }
 
-void parse_command() {
+static void parse_command() {
   json_settings settings;
   char error[256];
   int i;
@@ -43,9 +43,7 @@ void parse_command() {
   int type = 0;
   int ncams = 0;
   int *cam_ids = NULL;
-  int file_id = 0;
   int64_t position = 0;
-  char *session_id;
 
   struct screen *screen = NULL;
 
@@ -72,22 +70,21 @@ void parse_command() {
         json_value *arr_elem = value->u.array.values[i];
         cam_ids[i] = arr_elem->u.integer;
       }
-    } else if (strcmp(key, "file_id") == 0) {
-      file_id = value->u.integer;
     } else if (strcmp(key, "position") == 0) {
       position = value->u.integer;
-    } else if (strcmp(key, "session_id") == 0) {
-      session_id = (char*)malloc(value->u.string.length);
-      strcpy(session_id, value->u.string.ptr);
     }
   }
   json_value_free(json);
 
-  printf("session_id: %s, type: %d, ncams: %d, file_id: %d, position: %lld\n", session_id, type, ncams, file_id, position);
+  session_id += 1;
 
   screen = (struct screen *)malloc(sizeof(struct screen));
+  screen->type = type;
   screen->ncams = ncams;
+  screen->session_id = session_id;
   screen->cams = get_cams_by_ids(cam_ids, ncams);
+
+  printf("session_id: %d, type: %d, ncams: %d, position: %lld\n", session_id, type, ncams, position);
 
   init_screen(screen);
 }

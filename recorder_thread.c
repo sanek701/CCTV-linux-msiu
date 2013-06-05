@@ -1,49 +1,37 @@
+#include <highgui.h>
+#include <libswscale/swscale.h>
 #include "cameras.h"
 
 extern char *store_dir;
 
-void print_camera(struct camera *cam);
-void create_event(int cam_id, time_t raw_started_at, time_t raw_finished_at);
-void create_videofile(struct camera *cam, char *filepath);
-void update_videofile(struct camera *cam);
-
-void crit(char *msg, int errnum) {
-  char errbuf[2048];
-  fprintf(stderr, "%s\n", msg);
-  if(errnum != 0 && av_strerror(errnum, errbuf, sizeof(errbuf)) == 0) {
-    fprintf(stderr, "%s\n", errbuf);
-  }
-  exit(EXIT_FAILURE);
-}
-
-int interrupt_callback(void *opaque) {
+static int interrupt_callback(void *opaque) {
   struct camera *cam = opaque;
   if(time(NULL) - cam->last_io > 5) return 1;
   return 0;
 }
 
-int open_input(AVFormatContext *s, AVDictionary **opts) {
+static int open_input(AVFormatContext *s, AVDictionary **opts) {
   int ret;
   AVCodec *dec;
   int video_stream_index;
   if((ret = avformat_open_input(&s, s->filename, NULL, opts)) < 0)
-    crit("avformat_open_input", ret);
+    av_crit("avformat_open_input", ret);
   if((ret = avformat_find_stream_info(s, NULL)) < 0)
-    crit("avformat_find_stream_info", ret);
+    av_crit("avformat_find_stream_info", ret);
   video_stream_index = av_find_best_stream(s, AVMEDIA_TYPE_VIDEO, -1, -1, &dec, 0);
   if(video_stream_index < 0)
-    crit("av_find_best_stream", video_stream_index);
+    av_crit("av_find_best_stream", video_stream_index);
   if((ret = avcodec_open2(s->streams[video_stream_index]->codec, dec, NULL)) < 0) {
-    crit("avcodec_open2", ret);
+    av_crit("avcodec_open2", ret);
   }
   return video_stream_index;
 }
 
-void open_camera(struct camera *cam) {
+static void open_camera(struct camera *cam) {
   int ret = 0;
   AVDictionary *opts = NULL;
   if((ret = av_dict_set(&opts, "rtsp_transport", "tcp", 0)) < 0)
-    crit("av_dict_set", ret);
+    av_crit("av_dict_set", ret);
   cam->context = avformat_alloc_context();
   snprintf(cam->context->filename, sizeof(cam->context->filename), "%s", cam->url);
   cam->context->interrupt_callback.callback = &interrupt_callback;
@@ -56,7 +44,7 @@ void open_camera(struct camera *cam) {
   av_dict_free(&opts);
 }
 
-void open_output(struct camera *cam) {
+static void open_output(struct camera *cam) {
   int ret = 0;
   //AVDictionary *av_opts = NULL;
   AVFormatContext *s;
@@ -66,19 +54,19 @@ void open_output(struct camera *cam) {
   s = avformat_alloc_context();
 
   if((ofmt = av_guess_format("h264", NULL, NULL)) == NULL)
-    crit("av_guess_format", 0);
+    av_crit("av_guess_format", 0);
   s->oformat = ofmt;
 
   create_videofile(cam, s->filename);
 
   if((ret = avio_open2(&s->pb, s->filename, AVIO_FLAG_WRITE, NULL, NULL)) < 0)
-    crit("avio_open2", ret);
+    av_crit("avio_open2", ret);
 
   ost = avformat_new_stream(s, (AVCodec *)cam->codec->codec);
   if(ost == NULL)
-    crit("avformat_new_stream", 0);
+    av_crit("avformat_new_stream", 0);
   if((ret = avcodec_copy_context(ost->codec, (const AVCodecContext *)cam->codec)) < 0)
-    crit("avcodec_copy_context", ret);
+    av_crit("avcodec_copy_context", ret);
 
   ost->sample_aspect_ratio = cam->codec->sample_aspect_ratio;
   ost->r_frame_rate    = cam->input_stream->r_frame_rate;
@@ -90,7 +78,7 @@ void open_output(struct camera *cam) {
     ost->codec->flags |= CODEC_FLAG_GLOBAL_HEADER;
 
   if((ret = avformat_write_header(s, NULL)) < 0) //&av_opts
-    crit("avformat_write_header", ret);
+    av_crit("avformat_write_header", ret);
 
   cam->output_context = s;
   cam->output_stream = ost;
@@ -102,18 +90,18 @@ int video_stream_index;
 AVFormatContext *rd;
 AVStream *st;
 
-void close_output(struct camera *cam) {
+static void close_output(struct camera *cam) {
   int ret;
   if((ret = av_write_trailer(cam->output_context)) < 0)
-    crit("av_write_trailer", ret);
+    av_crit("av_write_trailer", ret);
   if((ret = avcodec_close(cam->output_stream->codec)) < 0)
-    crit("avcodec_close", ret);
+    av_crit("avcodec_close", ret);
   if((ret = avio_close(cam->output_context->pb)) < 0)
-    crit("avio_close", ret);
+    av_crit("avio_close", ret);
   avformat_free_context(cam->output_context);
 }
 
-int detect_motion(struct motion_detection *md, AVFrame *frame) {
+static int detect_motion(struct motion_detection *md, AVFrame *frame) {
   IplImage *tmp;
   AVPicture pict;
 
@@ -180,14 +168,14 @@ void *recorder_thread(void *ptr) {
   int got_key_frame = 0, first_detection = 1;
   frame = avcodec_alloc_frame();
   if(!frame)
-    crit("avcodec_alloc_frame", 0);
+    av_crit("avcodec_alloc_frame", 0);
   av_init_packet(&packet);
   while(1) {
     cam->last_io = time(NULL);
     ret = av_read_frame(cam->context, &packet);
     if(ret < 0) {
       if(ret == AVERROR_EOF) break;
-      else crit("av_read_frame", ret);
+      else av_crit("av_read_frame", ret);
     }
 
     if(packet.stream_index == cam->video_stream_index) {
@@ -203,7 +191,7 @@ void *recorder_thread(void *ptr) {
       cnt = (cnt + 1) % cam->analize_frames;
       if(cnt == 0) {
         if((ret = avcodec_decode_video2(cam->codec, frame, &got_frame, &packet)) < 0) {
-          crit("avcodec_decode_video2", ret);
+          av_crit("avcodec_decode_video2", ret);
         }
         if(got_frame) {
           if(detect_motion(&md, frame)) {
@@ -257,7 +245,7 @@ void *recorder_thread(void *ptr) {
   update_videofile(cam);
   close_output(cam);
   if((ret = avcodec_close(cam->codec)) < 0)
-    crit("avcodec_close", ret);
+    av_crit("avcodec_close", ret);
   avformat_close_input(&cam->context);
   av_free(frame);
 

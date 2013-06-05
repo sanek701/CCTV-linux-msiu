@@ -1,28 +1,9 @@
-#include <stdio.h>
-#include <errno.h>
-#include <stdlib.h>
-#include <string.h>
-#include <pthread.h>
-#include <time.h>
-
-#include <libavdevice/avdevice.h>
-#include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
-#include <libavformat/avio.h>
-#include <libavutil/timestamp.h>
-#include <libswscale/swscale.h>
-
 #include <cv.h>
-#include <highgui.h>
-
-#include <libpq-fe.h>
-#include <libconfig.h>
-
 #include <gst/gst.h>
 #include <gst/rtsp-server/rtsp-server.h>
-
 #include "l1-list.h"
-#include "json.h"
+#include "database.h"
 
 #define ARCHIVE 1
 #define REAL 2
@@ -62,8 +43,10 @@ struct motion_detection {
 };
 
 struct screen {
+    int type;
     int ncams;
     struct camera **cams;
+    unsigned int session_id;
     uint8_t **frames;
     int left_frames;
     pthread_mutex_t counter_lock;
@@ -77,4 +60,7 @@ struct cam_consumer {
     int position;
 };
 
-void crit(char *msg, int errnum);
+void error(const char *msg);
+void av_crit(char *msg, int errnum);
+void *recorder_thread(void *ptr);
+void init_screen(struct screen *screen);
