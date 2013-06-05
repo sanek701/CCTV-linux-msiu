@@ -17,7 +17,8 @@ void init_screen(struct screen *screen) {
   int ret;
 
   sprintf(pipe, "/tmp/rtsp_pipe_%d", screen->session_id);
-  mkfifo(pipe, 0666);
+  if(mkfifo(pipe, 0666) < 0)
+    error("mkfifo");
 
   rtp_context = avformat_alloc_context();
   rtp_fmt = av_guess_format("rtp", NULL, NULL);
