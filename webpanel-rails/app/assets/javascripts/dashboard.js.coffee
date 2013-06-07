@@ -11,7 +11,6 @@ jQuery ->
   $('.watch').click ->
     cam_ids = $.map $('.camera.selected'), (obj)->
       return $(obj).find('.camera-btn').data('camera-id')
-    console.log(cam_ids)
     window.location.href = $('.watch').data('url') + '?ids=' + cam_ids.join(',')
     false
 

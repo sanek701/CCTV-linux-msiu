@@ -222,8 +222,12 @@ void *recorder_thread(void *ptr) {
       for(l1 *p = cam->cam_consumers_list; p != NULL; p = p->next) {
         struct cam_consumer *consumer = (struct cam_consumer *)p->value;
         if(consumer->screen->ncams == 1) {
-          //packet.stream_index = rtp_stream->id;
-          //av_write_frame(rtp_context, &packet);
+          packet.stream_index = consumer->screen->rtp_stream->id;
+          av_write_frame(consumer->screen->rtp_context, &packet);
+        } else {
+          // decode frame
+          // rescame image
+          // copy to output image
         }
       }
     }

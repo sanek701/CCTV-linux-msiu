@@ -1,3 +1,4 @@
+#include <pthread.h>
 #include <libavformat/avformat.h>
 #include <cv.h>
 #include <gst/gst.h>
@@ -42,17 +43,30 @@ struct motion_detection {
     uint8_t* buffer;
 };
 
+struct in_out_cpy {
+  AVFormatContext *in_ctx;
+  AVFormatContext *out_ctx;
+  int in_stream_index;
+  AVStream *out_stream;
+  int active;
+};
+
 struct screen {
     int type;
     int ncams;
     struct camera **cams;
     unsigned int session_id;
+    time_t timestamp;
     uint8_t **frames;
     int left_frames;
     pthread_mutex_t counter_lock;
     GstRTSPMediaFactory *factory;
     AVFormatContext *rtp_context;
     AVStream *rtp_stream;
+    int rtp_port;
+    int width;
+    int height;
+    struct in_out_cpy *io;
 };
 
 struct cam_consumer {

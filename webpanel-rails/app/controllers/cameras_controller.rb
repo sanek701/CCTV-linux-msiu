@@ -40,5 +40,7 @@ class CamerasController < InheritedResources::Base
   def watch
     template = params[:template]
     cameras = Camera.find(params[:ids].split(','))
+
+    @rtsp_link = VIDEO_SERVER.show_real_image(cameras)
   end
 end

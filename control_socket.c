@@ -35,7 +35,7 @@ static struct camera** get_cams_by_ids(int *cam_ids, int ncams) {
   return cams;
 }
 
-static void parse_command() {
+static struct screen* parse_command() {
   json_settings settings;
   char error[256];
   int i;
@@ -43,7 +43,7 @@ static void parse_command() {
   int type = 0;
   int ncams = 0;
   int *cam_ids = NULL;
-  int64_t position = 0;
+  time_t timestamp = 0;
 
   struct screen *screen = NULL;
 
@@ -70,8 +70,8 @@ static void parse_command() {
         json_value *arr_elem = value->u.array.values[i];
         cam_ids[i] = arr_elem->u.integer;
       }
-    } else if (strcmp(key, "position") == 0) {
-      position = value->u.integer;
+    } else if (strcmp(key, "timestamp") == 0) {
+      timestamp = value->u.integer;
     }
   }
   json_value_free(json);
@@ -83,10 +83,12 @@ static void parse_command() {
   screen->ncams = ncams;
   screen->session_id = session_id;
   screen->cams = get_cams_by_ids(cam_ids, ncams);
+  screen->timestamp = timestamp;
 
-  printf("session_id: %d, type: %d, ncams: %d, position: %lld\n", session_id, type, ncams, position);
+  printf("session_id: %d, type: %d, ncams: %d, timestamp: %ld\n", session_id, type, ncams, timestamp);
 
   init_screen(screen);
+  return screen;
 }
 
 void initialize_control_socket() {
@@ -162,9 +164,11 @@ void control_socket_loop() {
             break;
           }
 
-          parse_command();
+          struct screen *screen = parse_command();
+          sprintf(buffer, "{ \"session_id\": %d, \"width\": %d, \"height\": %d }\n",
+            screen->session_id, screen->width, screen->height);
 
-          rc = send(fds[i].fd, "ok\n", 4, 0);
+          rc = send(fds[i].fd, buffer, strlen(buffer), 0);
           if(rc < 0) {
             perror("send");
             close_conn = 1;

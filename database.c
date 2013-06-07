@@ -18,8 +18,9 @@ static const char *read_db_setting(char* path) {
   return str;
 }
 
-static PGresult *exec_query(char* query) {
+static PGresult* exec_query(char* query) {
   pthread_mutex_lock(&db_lock);
+  fprintf(stderr, "%s\n", query);
   PGresult *result = PQexec(conn, query);
   pthread_mutex_unlock(&db_lock);
   return result;
@@ -79,7 +80,7 @@ struct camera* select_cameras(int *ncams) {
     PQclear(result);
   }
 
-  n_cameras = PQntuples(result);
+  n_cameras = 1;// PQntuples(result);
   cameras = (struct camera*)malloc(n_cameras * sizeof(struct camera));
   memset(cameras, 0, n_cameras * sizeof(struct camera));
 
@@ -114,33 +115,36 @@ struct camera* select_cameras(int *ncams) {
 
 void create_event(int cam_id, time_t raw_started_at, time_t raw_finished_at) {
   char query[256];
-  snprintf(query, sizeof(query), "INSERT INTO events(camera_id, started_at, finished_at) VALUES (%u, to_timestamp(%u) at time zone 'UTC', to_timestamp(%u) at time zone 'UTC');",
-    cam_id, (unsigned int)raw_started_at, (unsigned int)raw_finished_at);
-  printf("%s\n", query);
+  snprintf(query, sizeof(query),
+    "INSERT INTO events(camera_id, started_at, finished_at) VALUES (%u, to_timestamp(%ld) at time zone 'UTC', to_timestamp(%ld) at time zone 'UTC');",
+    cam_id, raw_started_at, raw_finished_at);
+  
   PGresult *result = exec_query(query);
   if(PQresultStatus(result) != PGRES_COMMAND_OK) {
     fprintf(stderr, "Insertion failed(event): %s\n", PQresultErrorMessage(result));
     exit(EXIT_FAILURE);
   }
+
   PQclear(result);
 }
 
 void create_videofile(struct camera *cam, char *filepath) {
   char query[256], date[11], datetime[15];
   cam->file_started_at = time(NULL);
-  snprintf(query, sizeof(query), "INSERT INTO videofiles(camera_id, started_at) VALUES (%u, to_timestamp(%u) at time zone 'UTC') RETURNING (id);",
-    cam->id, (unsigned int)cam->file_started_at);
-  printf("%s\n", query);
+  snprintf(query, sizeof(query), "INSERT INTO videofiles(camera_id, started_at) VALUES (%u, to_timestamp(%ld) at time zone 'UTC') RETURNING (id);",
+    cam->id, cam->file_started_at);
+  
   PGresult *result = exec_query(query);
   if(PQresultStatus(result) != PGRES_TUPLES_OK) {
     fprintf(stderr, "Insertion failed(videofile): %s\n", PQresultErrorMessage(result));
     exit(EXIT_FAILURE);
   }
+
   sscanf(PQgetvalue(result, 0, PQfnumber(result, "id")), "%d", &cam->file_id);
   PQclear(result);
 
-  strftime(date, 11, "%Y%m%d", localtime(&cam->file_started_at));
-  strftime(datetime, 15, "%Y%m%d%H%M%S", localtime(&cam->file_started_at));
+  strftime(date, sizeof(date), "%Y%m%d", localtime(&cam->file_started_at));
+  strftime(datetime, sizeof(datetime), "%Y%m%d%H%M%S", localtime(&cam->file_started_at));
 
   snprintf(filepath, 1024, "%s/%s", store_dir, cam->name);
   mkdir(filepath, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
@@ -148,14 +152,13 @@ void create_videofile(struct camera *cam, char *filepath) {
   snprintf(filepath, 1024, "%s/%s/%s", store_dir, cam->name, date);
   mkdir(filepath, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
 
-  snprintf(filepath, 1024, "%s/%s/%s/%s.h264", store_dir, cam->name, 
-date, datetime);
+  snprintf(filepath, 1024, "%s/%s/%s/%s.h264", store_dir, cam->name, date, datetime);
 }
 
 void update_videofile(struct camera *cam) {
   char query[256];
-  snprintf(query, sizeof(query), "UPDATE videofiles SET finished_at = to_timestamp(%u) at time zone 'UTC' WHERE id = %d;",
-    (unsigned int)time(NULL), cam->file_id);
+  snprintf(query, sizeof(query), "UPDATE videofiles SET finished_at = to_timestamp(%ld) at time zone 'UTC' WHERE id = %d;",
+    time(NULL), cam->file_id);
   printf("%s\n", query);
   PGresult *result = exec_query(query);
   if(PQresultStatus(result) != PGRES_COMMAND_OK) {
@@ -163,4 +166,43 @@ void update_videofile(struct camera *cam) {
     exit(EXIT_FAILURE);
   }
   PQclear(result);
+}
+
+void find_video_file(int cam_id, char *fname, time_t *timestamp) {
+  char query[256], date_part[32];
+  time_t start_ts;
+  int videofile_id;
+
+  snprintf(query, sizeof(query), "SELECT code FROM cameras where id = %d;", cam_id);
+  PGresult *result1 = exec_query(query);
+  if(PQresultStatus(result1) != PGRES_TUPLES_OK) {
+    fprintf(stderr, "Selection failed(cameras): %s\n", PQresultErrorMessage(result1));
+    exit(EXIT_FAILURE);
+  }
+
+  char *cam_code = PQgetvalue(result1, 0, 0);
+
+  snprintf(query, sizeof(query),
+    "SELECT id, date_part('epoch', started_at) FROM videofiles WHERE camera_id = %d AND started_at <= to_timestamp(%ld) at time zone 'UTC' AND (finished_at <= to_timestamp(%ld) at time zone 'UTC' OR finished_at IS NULL);",
+    cam_id, *timestamp, *timestamp);
+
+  PGresult *result2 = exec_query(query);
+  if(PQresultStatus(result2) != PGRES_TUPLES_OK) {
+    fprintf(stderr, "Insertion failed(videofile): %s\n", PQresultErrorMessage(result2));
+    exit(EXIT_FAILURE);
+  }
+
+  char *id = PQgetvalue(result2, 0, 0);
+  char *ts = PQgetvalue(result2, 0, 1);
+
+  sscanf(id, "%d", &videofile_id);
+  sscanf(ts, "%ld", &start_ts);
+
+  *timestamp -= start_ts;
+
+  strftime(date_part, sizeof(date_part), "%Y%m%d/%Y%m%d%H%M%S", localtime(&start_ts));
+  snprintf(fname, 1024, "%s/%s/%s.h264", store_dir, cam_code, date_part);
+
+  PQclear(result1);
+  PQclear(result2);
 }
