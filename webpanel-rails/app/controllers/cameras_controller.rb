@@ -1,4 +1,8 @@
 class CamerasController < InheritedResources::Base
+  def watch_archive
+
+  end
+
   def timeline_entries
     camera = Camera.find(params[:id])
     date = Date.parse(params[:date]).to_time
@@ -25,16 +29,11 @@ class CamerasController < InheritedResources::Base
   def seek
     camera = Camera.find(params[:id])
     date = Date.parse(params[:date]).to_time
-    position = params[:position].to_f * 24 * 60 * 60 / 100
+    position = params[:position].to_f * 24 * 60 * 60
+    session_id = params[:session_id].try(:to_i)
     date += position.seconds
 
-    if date > Time.now
-      render json: { url: camera.url }
-      return
-    end
-
-    vf = camera.videofiles.where("started_at <= ? AND (finished_at <= ? OR finished_at IS NULL)", date, date).first
-    render json: { url: vf.url, position: ((date - vf.started_at) * 1000).to_i }
+    VIDEO_SERVER
   end
 
   def watch
@@ -42,5 +41,19 @@ class CamerasController < InheritedResources::Base
     cameras = Camera.find(params[:ids].split(','))
 
     @rtsp_link = VIDEO_SERVER.show_real_image(cameras)
+  end
+
+  def select
+  end
+
+  def archive
+  end
+
+  def sort
+    cam1 = Camera.find(params[:camera_id])
+    cam2 = Camera.find_by_position(params[:position])
+    cam2.update_attribute(:position, cam1.position)
+    cam1.update_attribute(:position, params[:position])
+    render nothing: true
   end
 end

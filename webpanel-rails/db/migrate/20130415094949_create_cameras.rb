@@ -7,6 +7,7 @@ class CreateCameras < ActiveRecord::Migration
       t.integer :analize_frames
       t.integer :threshold
       t.integer :motion_delay
+      t.integer :position
 
       t.timestamps
     end

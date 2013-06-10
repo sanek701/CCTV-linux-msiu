@@ -1,18 +1,27 @@
 /*
- * This is a manifest file that'll be compiled into application.css, which will include all the files
- * listed below.
- *
- * Any CSS and SCSS file within this directory, lib/assets/stylesheets, vendor/assets/stylesheets,
- * or vendor/assets/stylesheets of plugins, if any, can be referenced here using a relative path.
- *
- * You're free to add application-wide styles to this file and they'll appear at the top of the
- * compiled file, but it's generally better to create a new file per style scope.
- *
+ *= require bootstrap_and_overrides
+ *= require bootstrap-datepicker
  *= require_self
- *= require_tree .
  */
 
-body { padding-top: 40px; }
+body { padding-top: 60px; }
+.clearfloat {
+  clear: both;
+  height: 0;
+  font-size: 1px;
+  line-height: 0px;
+}
+
+.player {
+  width: 60%;
+  margin: 0 auto;
+}
+
+.timeline-wrapper {
+  width: 100%;
+  height: 140px;
+  overflow-x: scroll;
+}
 .timeline {
   position: relative;
   height: 100px;
@@ -26,13 +35,102 @@ body { padding-top: 40px; }
   background-color: #42aaff;
   z-index: 100;
 }
+.pointer {
+  position: absolute;
+  width: 1px; 
+  height: 100px;
+  background-color: black;
+  z-index: 101;
+}
 .event {
   position: absolute;
   height: 60px;
   margin-top: 40px;
   background-color: #e49b0f;
-  z-index: 101;
+  z-index: 102;
 }
 .event:hover {
   background-color: #ff0033;
+}
+.time {
+  position: absolute;
+  top: 100px;
+}
+
+.dashboard-statistics {
+  background-color: #F5F5F5;
+  border: 1px solid #E9E9E9;
+  margin: 0 2%;
+  padding: 15px;
+  text-align: center;
+  border-radius: 8px;
+}
+.dashboard-statistics .column {
+  float: left;
+  text-align: left;
+  width: 33%;
+}
+.dashboard-statistics .column p {
+  margin: 0;
+}
+.dashboard-buttons {
+  margin: 0 auto;
+}
+.dashboard-buttons {
+  width: 80%;
+  margin: 20px auto;
+}
+.dashboard-button {
+  background: url(i/but-bg.png);
+  border: 1px solid #919191;
+  border-radius: 5px;
+  padding: 6px;
+  margin: 0 20px;
+  float: left;
+}
+.dashboard-button-cont {
+  border-radius: inherit;
+  border: 1px solid #919191;
+}
+.dashboard-button-icon {
+  background-color: #FCFCFC;
+  border-top-left-radius: 5px;
+  border-top-right-radius: 5px;
+  text-align: center;
+  width: 250px;
+}
+.dashboard-button-icon i {
+  font-size: 100px;
+  text-decoration: none;
+}
+.dashboard-button-title {
+  display: table-cell;
+  width: 250px;
+  height: 55px;
+  border-bottom-left-radius: 5px;
+  border-bottom-right-radius: 5px;
+  border-top: 1px solid #bababa;
+  background: #efefef url(i/but-title-bg.gif) repeat-x;
+  text-align: center;
+  vertical-align: middle;
+  text-decoration: none;
+  color: #000;
+}
+.dashboard-button-title:hover {
+  color:#f00;
+}
+
+.cameras {
+  margin-bottom: 20px;
+}
+.camera {
+  border: 1px solid #919191;
+  border-radius: 8px;
+  padding: 6px;
+  text-align: center;
+  margin: 10px !important;
+}
+.camera.selected {
+  border: 1px solid #f4c430;
+  background-color: #fffddf;
 }

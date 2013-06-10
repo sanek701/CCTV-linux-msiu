@@ -208,7 +208,7 @@ void *recorder_thread(void *ptr) {
           }
         }
 
-        if(time(NULL) - cam->last_screenshot > 60) {
+        if(time(NULL) - cam->last_screenshot > 60 && (packet.flags & AV_PKT_FLAG_KEY)) {
           char fname[128];
           snprintf(fname, sizeof(fname), "%s/%s/screenshot.png", store_dir, cam->name);
           cvSaveImage(fname, md.cur, 0);

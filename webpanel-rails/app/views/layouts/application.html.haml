@@ -21,10 +21,10 @@
             %span.icon-bar
             %span.icon-bar
             %span.icon-bar
-          %a.brand(href="#") WebPanel
-          .container.nav-collapse
-            %ul.nav
-              %li= link_to "Камеры", cameras_path
+          = link_to 'Видеонаблюдение', root_url, class: 'brand'
+          -#.container.nav-collapse
+          -#  %ul.nav
+          -#    %li= link_to "Камеры", cameras_path
 
     .container
 
@@ -35,7 +35,6 @@
     
       %br
       %footer
-        %p &copy; Company 2013
     /
       Javascripts
       \==================================================

@@ -1,14 +1,14 @@
-%br
 %embed#vlc{type: "application/x-vlc-plugin", pluginspage: "http://www.videolan.org", width: 640, height: 480, toolbar: 'false'}/
 %object{classid: "clsid:9BE31822-FDAD-461B-AD51-BE1D1C159921", codebase: "http://download.videolan.org/pub/videolan/vlc/last/win32/axvlc.cab"}
 
+%br
 = link_to_function 'play', 'vlc.playlist.playItem(0)', class: 'btn btn-info'
+= link_to_function 'fullscreen', 'vlc.video.fullscreen', class: 'btn btn-info'
 
 - content_for :js do
   :javascript
     $(function() {
       var vlc = document.getElementById("vlc");
       var id = vlc.playlist.add("#{@rtsp_link}", "fancy name", []);
-      vlc.playlist.playItem(id);
       vlc.playlist.playItem(id);
     });

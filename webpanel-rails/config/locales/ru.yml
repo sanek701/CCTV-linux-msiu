@@ -1,0 +1,19 @@
+ru:
+  activerecord:
+    models:
+      camera:
+        one: Камера
+        many: Камеры
+    attributes:
+      camera:
+        about: Описание камеры
+        code: Краткое название
+        id: ID
+        url: Сетевой адрес
+        analize_frames: Частота анализа кадров
+        threshold: Чувствительность фильтра удаления шума
+        motion_delay: Минимальный временной интервал между различными событиями
+
+  date:
+    formats:
+      default: '%d.%m.%Y'

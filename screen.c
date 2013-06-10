@@ -23,7 +23,8 @@ void init_screen(struct screen *screen) {
 
   printf("rtp_port: %d\n", screen->rtp_port);
 
-  sprintf(gst_pipe, "( udpsrc port=%d ! application/x-rtp,payload=96 ! rtph264depay ! rtph264pay name=pay0 pt=96 )", screen->rtp_port);
+  // ignoring stream 0 without media type
+  sprintf(gst_pipe, "( udpsrc port=%d caps=\"application/x-rtp, media=video, encoding-name=H264, videopayload=96\" ! rtph264depay ! rtph264pay name=pay0 pt=96 )", screen->rtp_port);
   sprintf(path, "/stream_%d", screen->session_id);
 
   GstRTSPMediaFactory *factory = gst_rtsp_media_factory_new();
@@ -224,13 +225,11 @@ static void open_video_file(struct screen *screen) {
   screen->io = io;
 }
 
-static gboolean timeout(GstRTSPServer * server, gboolean ignored) {
+static gboolean timeout(GstRTSPServer *server, gboolean ignored) {
   GstRTSPSessionPool *pool;
- 
   pool = gst_rtsp_server_get_session_pool(server);
   gst_rtsp_session_pool_cleanup(pool);
   g_object_unref(pool);
- 
   return TRUE;
 }
 
@@ -241,7 +240,7 @@ void *start_rtsp_server(void* ptr) {
   server = gst_rtsp_server_new();
 
   gst_rtsp_server_attach(server, NULL);
-  g_timeout_add_seconds(2, (GSourceFunc)timeout, server);
+  g_timeout_add_seconds(3, (GSourceFunc)timeout, server);
   printf("RSTP server starting\n");
   g_main_loop_run(loop);
   printf("RSTP server stopped\n");

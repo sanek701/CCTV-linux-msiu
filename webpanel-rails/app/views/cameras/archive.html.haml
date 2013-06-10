@@ -1,0 +1,8 @@
+%i Выберите камеру:
+.row-fluid.cameras
+  - Camera.order(:position).all.each do |camera|
+    .span3.camera
+      = link_to watch_archive_camera_path(camera), class: 'camera-btn' do
+        %div
+          = image_tag "/storage/#{camera.code}/screenshot.png?#{Time.now.to_i}"
+          = camera.about

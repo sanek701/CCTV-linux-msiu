@@ -1,0 +1,24 @@
+%i Количество одновременно просматриваемых камер:
+.templates
+  %button.btn.btn-success 1
+  %button.btn 4
+  %button.btn 9
+  %button.btn 16
+
+%br
+%i Выберите камеры:
+.row-fluid.cameras.selectable.sortable{data: { sort_url: sort_cameras_path }}
+  - Camera.order(:position).all.each do |camera|
+    .span3.camera{data: { camera_id: camera.id }}
+      = link_to '#', class: 'camera-btn', data: { camera_id: camera.id } do
+        %div
+          = image_tag "/storage/#{camera.code}/screenshot.png?#{Time.now.to_i}"
+          = camera.about
+
+= link_to '#', class: 'btn btn-success watch disabled', data: { url: watch_cameras_path } do
+  %i.icon-play-circle
+  Просмотр
+
+= link_to '#', class: 'btn toggle-all' do
+  %i.icon-check
+  Выбрать все

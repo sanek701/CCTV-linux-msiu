@@ -20,6 +20,7 @@ ActiveRecord::Schema.define(:version => 20130517115712) do
     t.integer  "analize_frames"
     t.integer  "threshold"
     t.integer  "motion_delay"
+    t.integer  "position"
     t.datetime "created_at",                    :null => false
     t.datetime "updated_at",                    :null => false
   end

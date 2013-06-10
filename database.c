@@ -80,7 +80,7 @@ struct camera* select_cameras(int *ncams) {
     PQclear(result);
   }
 
-  n_cameras = 1;// PQntuples(result);
+  n_cameras = PQntuples(result);
   cameras = (struct camera*)malloc(n_cameras * sizeof(struct camera));
   memset(cameras, 0, n_cameras * sizeof(struct camera));
 

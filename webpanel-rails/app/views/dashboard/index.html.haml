@@ -1,2 +1,46 @@
-%h1 Dashboard#index
-%p Find me in app/views/dashboard/index.html.haml
+.dashboard-statistics
+  .column
+    %p
+      Добавлено камер:
+      %b= Camera.count
+    %p
+      Запись производится с
+      %b= @stats[:ncams]
+      камер
+  .column
+    Использование диска:
+    .progress{style: 'width: 95%; margin: 0;'}
+      .bar.bar-success{style: "width: #{@stats[:hdd_usage]}%;"}
+        %p
+          %i.icon-hdd
+          %b #{@stats[:hdd_usage]}%
+  .column
+    Статус сервера
+    %br
+    %span.label.label-success Запущен
+  %br.clearfloat
+
+.dashboard-buttons
+  .dashboard-button
+    .dashboard-button-cont
+      = link_to select_cameras_path do
+        .dashboard-button-icon
+          %i.icon-facetime-video
+        .dashboard-button-title
+          Видеокамеры
+
+  .dashboard-button
+    .dashboard-button-cont
+      = link_to archive_cameras_path do
+        .dashboard-button-icon
+          %i.icon-hdd
+        .dashboard-button-title
+          Архив
+
+  .dashboard-button
+    .dashboard-button-cont
+      = link_to cameras_path do
+        .dashboard-button-icon
+          %i.icon-wrench
+        .dashboard-button-title
+          Настройки

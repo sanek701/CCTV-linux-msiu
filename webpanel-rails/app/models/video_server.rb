@@ -8,9 +8,16 @@ class VideoServer
 
   def show_real_image(cameras)
     result = send type: 'real', cam_ids: cameras.map(&:id)
-    p result
     session_id = result['session_id']
     "rtsp://localhost:8554/stream_#{session_id}"
+  end
+
+  def show_archive(session_id, camera_id, timestampt)
+    send type: 'real', cam_ids: cameras.map(&:id)
+  end
+
+  def stats
+    send type: 'stats'
   end
 
   private

@@ -1,10 +1,13 @@
 WebPanel::Application.routes.draw do
-  get "dashboard/index"
-  get "dashboard/select_cameras"
-
   resources :cameras do
     get :timeline_entries, on: :member
+    get :watch_archive, on: :member
     get :seek, on: :member
+    get :select, on: :collection
     get :watch, on: :collection
+    get :archive, on: :collection
+    post :sort, on: :collection
   end
+
+  root to: "dashboard#index"
 end

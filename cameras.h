@@ -8,6 +8,7 @@
 
 #define ARCHIVE 1
 #define REAL 2
+#define STATS 3
 
 struct camera {
     int id;

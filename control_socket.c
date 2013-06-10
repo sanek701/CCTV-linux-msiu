@@ -2,6 +2,7 @@
 #include <sys/ioctl.h>
 #include <sys/poll.h>
 #include <sys/socket.h>
+#include <sys/statvfs.h>
 #include <sys/types.h>
 #include <sys/un.h>
 #include "cameras.h"
@@ -10,6 +11,7 @@
 extern struct camera *cameras;
 extern int n_cameras;
 extern int should_terminate;
+extern char *store_dir;
 
 static struct sockaddr_un address, client;
 static int socket_fd, connection_fd;
@@ -35,7 +37,15 @@ static struct camera** get_cams_by_ids(int *cam_ids, int ncams) {
   return cams;
 }
 
-static struct screen* parse_command() {
+static void snd(int fd, char *buffer, int *close_conn) {
+  int rc = send(fd, buffer, strlen(buffer), 0);
+  if(rc < 0) {
+    perror("send");
+    *close_conn = 1;
+  }
+}
+
+static void parse_command(int client_fd, int *close_conn) {
   json_settings settings;
   char error[256];
   int i;
@@ -43,15 +53,17 @@ static struct screen* parse_command() {
   int type = 0;
   int ncams = 0;
   int *cam_ids = NULL;
+  int ssid = 0;
   time_t timestamp = 0;
 
   struct screen *screen = NULL;
 
   memset(&settings, 0, sizeof (json_settings));
-  json_value *json = json_parse(buffer, strlen(buffer));
+  json_value *json = json_parse_ex(&settings, buffer, strlen(buffer), error);
 
   if(json == NULL) {
     fprintf(stderr, "Json error: %s\n", error);
+    fprintf(stderr, "buffer: %s\n", buffer);
   }
 
   for(i=0; i < json->u.object.length; i++) {
@@ -62,7 +74,10 @@ static struct screen* parse_command() {
       char *string_value = value->u.string.ptr;
       if(strcmp(string_value, "archive")==0)
         type = ARCHIVE;
-      else type = REAL;
+      else if(strcmp(string_value, "real")==0)
+        type = REAL;
+      else if(strcmp(string_value, "stats")==0)
+        type = STATS;
     } else if (strcmp(key, "cam_ids") == 0) {
       ncams = value->u.array.length;
       cam_ids = (int*)malloc(ncams * sizeof(int));
@@ -72,23 +87,42 @@ static struct screen* parse_command() {
       }
     } else if (strcmp(key, "timestamp") == 0) {
       timestamp = value->u.integer;
+    } else if (strcmp(key, "session_id") == 0) {
+      ssid = value->u.integer;
     }
   }
   json_value_free(json);
 
-  session_id += 1;
+  if(type == ARCHIVE || type == REAL) {
+    if(ssid == 0) {
+      session_id += 1;
+      ssid == session_id;
+    }
 
-  screen = (struct screen *)malloc(sizeof(struct screen));
-  screen->type = type;
-  screen->ncams = ncams;
-  screen->session_id = session_id;
-  screen->cams = get_cams_by_ids(cam_ids, ncams);
-  screen->timestamp = timestamp;
+    screen = (struct screen *)malloc(sizeof(struct screen));
+    screen->type = type;
+    screen->ncams = ncams;
+    screen->session_id = ssid;
+    screen->cams = get_cams_by_ids(cam_ids, ncams);
+    screen->timestamp = timestamp;
 
-  printf("session_id: %d, type: %d, ncams: %d, timestamp: %ld\n", session_id, type, ncams, timestamp);
+    printf("session_id: %d, type: %d, ncams: %d, timestamp: %ld\n", session_id, type, ncams, timestamp);
 
-  init_screen(screen);
-  return screen;
+    init_screen(screen);
+
+    sprintf(buffer, "{ \"session_id\": %d, \"width\": %d, \"height\": %d }\n", screen->session_id, screen->width, screen->height);
+    snd(client_fd, buffer, close_conn);
+  } else if(type == STATS) {
+    struct statvfs statvfs_buf;
+    if(statvfs(store_dir, &statvfs_buf) < 0) {
+      perror("statvfs");
+      return;
+    }
+    sprintf(buffer, "{ \"free_space\": %llu, \"tolal_space\": %llu, \"ncams\": %d }\n",
+      (unsigned long long)statvfs_buf.f_bsize * statvfs_buf.f_bavail,
+      (unsigned long long)statvfs_buf.f_bsize * statvfs_buf.f_blocks, n_cameras);
+    snd(client_fd, buffer, close_conn);
+  }
 }
 
 void initialize_control_socket() {
@@ -136,6 +170,7 @@ void control_socket_loop() {
 
         do {
           if((connection_fd = accept(socket_fd, (struct sockaddr *)&client, &address_length)) < 0) {
+            if(errno == EINTR) continue;
             if(errno != EWOULDBLOCK)
               perror("accept");
             break;
@@ -152,6 +187,7 @@ void control_socket_loop() {
         do {
           rc = recv(fds[i].fd, buffer, sizeof(buffer), 0);
           if(rc < 0) {
+            if(errno == EINTR) continue;
             if(errno != EWOULDBLOCK) {
               perror("recv");
               close_conn = 1;
@@ -164,16 +200,10 @@ void control_socket_loop() {
             break;
           }
 
-          struct screen *screen = parse_command();
-          sprintf(buffer, "{ \"session_id\": %d, \"width\": %d, \"height\": %d }\n",
-            screen->session_id, screen->width, screen->height);
+          buffer[rc] = '\0';
 
-          rc = send(fds[i].fd, buffer, strlen(buffer), 0);
-          if(rc < 0) {
-            perror("send");
-            close_conn = 1;
-            break;
-          }
+          parse_command(fds[i].fd, &close_conn);
+          if(close_conn) break;
         } while(TRUE);
 
         if(close_conn) {

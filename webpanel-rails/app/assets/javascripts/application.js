@@ -12,5 +12,14 @@
 //
 //= require jquery
 //= require jquery_ujs
+//= require jquery.ui.sortable
 //= require twitter/bootstrap
+//= require bootstrap-datepicker/core
+//= require bootstrap-datepicker/locales/bootstrap-datepicker.ru.js
 //= require_tree .
+
+$('.datepicker').datepicker({
+  format: 'dd.mm.yyyy',
+  weekStart: 1,
+  language: 'ru'
+});
