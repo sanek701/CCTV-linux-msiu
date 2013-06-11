@@ -2,17 +2,20 @@
 #include <unistd.h>
 
 GstRTSPServer *server;
-int ports = 0;
+unsigned int ports = 0;
+
+extern int should_terminate;
 
 static void open_video_file(struct screen *screen);
 static void init_single_camera_screen(struct screen *screen);
 static void init_multiple_camera_screen(struct screen *screen);
 
 void init_screen(struct screen *screen) {
-  char gst_pipe[1024], path[256];
-  int i, port;
+  char gst_pipe[128], path[128];
+  int port;
+  unsigned int i;
 
-  for(port=1, i=1; i<=65536; port+=1, i*=2) {
+  for(port=1, i=1; port <= 32; port+=1, i*=2) {
     if((ports & i) == 0) {
       ports |= i;
       break;
@@ -22,17 +25,6 @@ void init_screen(struct screen *screen) {
   screen->rtp_port = 4000 + port;
 
   printf("rtp_port: %d\n", screen->rtp_port);
-
-  // ignoring stream 0 without media type
-  sprintf(gst_pipe, "( udpsrc port=%d caps=\"application/x-rtp, media=video, encoding-name=H264, videopayload=96\" ! rtph264depay ! rtph264pay name=pay0 pt=96 )", screen->rtp_port);
-  sprintf(path, "/stream_%d", screen->session_id);
-
-  GstRTSPMediaFactory *factory = gst_rtsp_media_factory_new();
-  GstRTSPMediaMapping *mapping = gst_rtsp_server_get_media_mapping(server);
-  gst_rtsp_media_factory_set_launch(factory, gst_pipe);
-  gst_rtsp_media_mapping_add_factory(mapping, path, factory);
-  gst_rtsp_media_factory_set_shared(factory, TRUE);
-  g_object_unref(mapping);
 
   if(screen->type == REAL) {
     if(screen->ncams == 1)
@@ -49,6 +41,26 @@ void init_screen(struct screen *screen) {
   } else {
     open_video_file(screen);
   }
+
+  sprintf(gst_pipe, "( filesrc location=/tmp/stream_%d.sdp ! sdpdemux name=dynpay0 )", screen->rtp_port);
+  sprintf(path, "/stream_%d", screen->session_id);
+
+  GstRTSPMediaFactory *factory = gst_rtsp_media_factory_new();
+  GstRTSPMediaMapping *mapping = gst_rtsp_server_get_media_mapping(server);
+  gst_rtsp_media_factory_set_launch(factory, gst_pipe);
+  gst_rtsp_media_mapping_add_factory(mapping, path, factory);
+  gst_rtsp_media_factory_set_shared(factory, TRUE);
+  g_object_unref(mapping);
+}
+
+static void create_sdp(struct screen *screen) {
+  char buff[2048], fname[128];
+  av_sdp_create(&screen->rtp_context, 1, buff, sizeof(buff));
+  sprintf(fname, "/tmp/stream_%d.sdp", screen->rtp_port);
+  FILE *f = fopen(fname, "w+");
+  fprintf(f, "%s", buff);
+  fflush(f);
+  fclose(f);
 }
 
 static void init_single_camera_screen(struct screen *screen) {
@@ -79,6 +91,8 @@ static void init_single_camera_screen(struct screen *screen) {
   screen->rtp_stream = rtp_stream;
   screen->width = cam->codec->width;
   screen->height = cam->codec->height;
+
+  create_sdp(screen);
 }
 
 static void create_frame() {
@@ -134,6 +148,8 @@ static void init_multiple_camera_screen(struct screen *screen) {
 
   screen->rtp_context = rtp_context;
   screen->rtp_stream = rtp_stream;
+
+  create_sdp(screen);
 }
 
 static void* copy_input_to_output(void *ptr) {
@@ -149,6 +165,8 @@ static void* copy_input_to_output(void *ptr) {
     av_init_packet(&packet);
 
     if(!io->active)
+      break;
+    if(should_terminate)
       break;
   }
 

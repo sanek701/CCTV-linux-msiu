@@ -2,8 +2,9 @@
 %object{classid: "clsid:9BE31822-FDAD-461B-AD51-BE1D1C159921", codebase: "http://download.videolan.org/pub/videolan/vlc/last/win32/axvlc.cab"}
 
 %br
-= link_to_function 'play', 'vlc.playlist.playItem(0)', class: 'btn btn-info'
-= link_to_function 'fullscreen', 'vlc.video.fullscreen', class: 'btn btn-info'
+= link_to '#', onclick: 'vlc.video.fullscreen = true', class: 'btn btn-info' do
+  %i.icon-fullscreen
+  Развернуть на весь экран
 
 - content_for :js do
   :javascript

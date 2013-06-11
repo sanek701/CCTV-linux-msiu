@@ -69,10 +69,10 @@ static void open_output(struct camera *cam) {
     av_crit("avcodec_copy_context", ret);
 
   ost->sample_aspect_ratio = cam->codec->sample_aspect_ratio;
-  ost->r_frame_rate    = cam->input_stream->r_frame_rate;
-  ost->avg_frame_rate    = ost->r_frame_rate;
-  ost->time_base       = cam->input_stream->time_base;
-  ost->codec->time_base  = ost->time_base;
+  ost->r_frame_rate        = cam->input_stream->r_frame_rate;
+  ost->avg_frame_rate      = ost->r_frame_rate;
+  ost->time_base           = cam->input_stream->time_base;
+  ost->codec->time_base    = ost->time_base;
   
   if(ofmt->flags & AVFMT_GLOBALHEADER)
     ost->codec->flags |= CODEC_FLAG_GLOBAL_HEADER;

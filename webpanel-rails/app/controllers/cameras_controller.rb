@@ -40,7 +40,8 @@ class CamerasController < InheritedResources::Base
     template = params[:template]
     cameras = Camera.find(params[:ids].split(','))
 
-    @rtsp_link = VIDEO_SERVER.show_real_image(cameras)
+    session_id = VIDEO_SERVER.show_real_image(cameras)
+    @rtsp_link = "rtsp://#{request.host}:8554/stream_#{session_id}"
   end
 
   def select

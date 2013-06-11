@@ -10,7 +10,7 @@
   .column
     Использование диска:
     .progress{style: 'width: 95%; margin: 0;'}
-      .bar.bar-success{style: "width: #{@stats[:hdd_usage]}%;"}
+      .bar{style: "width: #{@stats[:hdd_usage]}%;", class: "bar-#{@stats[:hdd_usage_class]}"}
         %p
           %i.icon-hdd
           %b #{@stats[:hdd_usage]}%

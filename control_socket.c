@@ -1,5 +1,5 @@
+#include <fcntl.h>
 #include <unistd.h>
-#include <sys/ioctl.h>
 #include <sys/poll.h>
 #include <sys/socket.h>
 #include <sys/statvfs.h>
@@ -17,7 +17,7 @@ static struct sockaddr_un address, client;
 static int socket_fd, connection_fd;
 static socklen_t address_length;
 static struct pollfd fds[10];
-static int nfds = 1, on = 1, rc;
+static int nfds = 1, rc;
 static int timeout = 5000;
 static char buffer[2048];
 static unsigned int session_id = 0;
@@ -96,7 +96,7 @@ static void parse_command(int client_fd, int *close_conn) {
   if(type == ARCHIVE || type == REAL) {
     if(ssid == 0) {
       session_id += 1;
-      ssid == session_id;
+      ssid = session_id;
     }
 
     screen = (struct screen *)malloc(sizeof(struct screen));
@@ -126,6 +126,7 @@ static void parse_command(int client_fd, int *close_conn) {
 }
 
 void initialize_control_socket() {
+  int flags, on = 1;
   memset(&address, 0, address_length);
   memset(&fds, 0 , sizeof(fds));
   address.sun_family = AF_UNIX;
@@ -135,10 +136,12 @@ void initialize_control_socket() {
 
   if((socket_fd = socket(PF_UNIX, SOCK_STREAM, 0)) < 0)
     error("socket");
-  if(setsockopt(socket_fd, SOL_SOCKET,  SO_REUSEADDR, (char *)&on, sizeof(on)) < 0)
+  if(setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, (char *)&on, sizeof(on)) < 0)
     error("setsockopt");
-  if(ioctl(socket_fd, FIONBIO, (char *)&on) < 0)
-    error("ioctl");
+  if((flags = fcntl(socket_fd, F_GETFL, 0)) < 0)
+    error("fcntl");
+  if(fcntl(socket_fd, F_SETFL, flags | O_NONBLOCK) < 0)
+    error("fcntl");
   if(bind(socket_fd, (struct sockaddr *)&address, address_length) < 0)
     error("bind");
   if(listen(socket_fd, 5) < 0)
@@ -147,7 +150,7 @@ void initialize_control_socket() {
 
 void control_socket_loop() {
   int current_size, close_conn, compress_array = 0;
-  int i,j;
+  int i,j,flags;
 
   address_length = sizeof(struct sockaddr_un);
   fds[0].fd = socket_fd;
@@ -176,6 +179,10 @@ void control_socket_loop() {
             break;
           }
           printf("New incoming connection - %d\n", connection_fd);
+          if((flags = fcntl(connection_fd, F_GETFL, 0)) < 0)
+            error("fcntl");
+          if(fcntl(connection_fd, F_SETFL, flags | O_NONBLOCK) < 0)
+            error("fcntl");
           fds[nfds].fd = connection_fd;
           fds[nfds].events = POLLIN;
           nfds++;
@@ -204,9 +211,10 @@ void control_socket_loop() {
 
           parse_command(fds[i].fd, &close_conn);
           if(close_conn) break;
-        } while(TRUE);
+        } while(rc > 0);
 
         if(close_conn) {
+          printf("Closing connection - %d\n", fds[i].fd);
           close(fds[i].fd);
           fds[i].fd = -1;
           compress_array = 1;

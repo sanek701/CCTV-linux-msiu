@@ -159,7 +159,6 @@ void update_videofile(struct camera *cam) {
   char query[256];
   snprintf(query, sizeof(query), "UPDATE videofiles SET finished_at = to_timestamp(%ld) at time zone 'UTC' WHERE id = %d;",
     time(NULL), cam->file_id);
-  printf("%s\n", query);
   PGresult *result = exec_query(query);
   if(PQresultStatus(result) != PGRES_COMMAND_OK) {
     fprintf(stderr, "Update failed(videofile): %s\n", PQresultErrorMessage(result));
