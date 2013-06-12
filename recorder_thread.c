@@ -190,9 +190,9 @@ void *recorder_thread(void *ptr) {
 
       cnt = (cnt + 1) % cam->analize_frames;
       if(cnt == 0) {
-        if((ret = avcodec_decode_video2(cam->codec, frame, &got_frame, &packet)) < 0) {
+        if((ret = avcodec_decode_video2(cam->codec, frame, &got_frame, &packet)) < 0)
           av_crit("avcodec_decode_video2", ret);
-        }
+
         if(got_frame) {
           if(detect_motion(&md, frame)) {
             if(first_activity == 0) first_activity = time(NULL);
@@ -217,13 +217,15 @@ void *recorder_thread(void *ptr) {
       }
 
       packet.stream_index = cam->output_stream->id;
-      av_write_frame(cam->output_context, &packet);
+      if((ret = av_write_frame(cam->output_context, &packet)) < 0)
+        av_crit("av_write_frame", ret);
 
       for(l1 *p = cam->cam_consumers_list; p != NULL; p = p->next) {
         struct cam_consumer *consumer = (struct cam_consumer *)p->value;
         if(consumer->screen->ncams == 1) {
           packet.stream_index = consumer->screen->rtp_stream->id;
-          av_write_frame(consumer->screen->rtp_context, &packet);
+          if((ret = av_write_frame(consumer->screen->rtp_context, &packet)) < 0)
+            av_crit("av_write_frame", ret);
         } else {
           // decode frame
           // rescame image

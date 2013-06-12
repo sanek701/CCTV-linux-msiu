@@ -167,10 +167,11 @@ void update_videofile(struct camera *cam) {
   PQclear(result);
 }
 
-void find_video_file(int cam_id, char *fname, time_t *timestamp) {
+int find_video_file(int cam_id, char *fname, time_t *timestamp) {
   char query[256], date_part[32];
   time_t start_ts;
   int videofile_id;
+  int found = 0, ret = 0;
 
   snprintf(query, sizeof(query), "SELECT code FROM cameras where id = %d;", cam_id);
   PGresult *result1 = exec_query(query);
@@ -179,29 +180,45 @@ void find_video_file(int cam_id, char *fname, time_t *timestamp) {
     exit(EXIT_FAILURE);
   }
 
+  if(PQntuples(result1) != 1) {
+    PQclear(result1);
+    fprintf(stderr, "No camera found\n");
+    return -1;
+  }
+
   char *cam_code = PQgetvalue(result1, 0, 0);
 
   snprintf(query, sizeof(query),
-    "SELECT id, date_part('epoch', started_at) FROM videofiles WHERE camera_id = %d AND started_at <= to_timestamp(%ld) at time zone 'UTC' AND (finished_at <= to_timestamp(%ld) at time zone 'UTC' OR finished_at IS NULL);",
+    "SELECT id, date_part('epoch', started_at) FROM videofiles WHERE camera_id = %d AND started_at <= to_timestamp(%ld) at time zone 'UTC' AND (finished_at >= to_timestamp(%ld) at time zone 'UTC' OR finished_at IS NULL);",
     cam_id, *timestamp, *timestamp);
 
   PGresult *result2 = exec_query(query);
   if(PQresultStatus(result2) != PGRES_TUPLES_OK) {
-    fprintf(stderr, "Insertion failed(videofile): %s\n", PQresultErrorMessage(result2));
+    fprintf(stderr, "Selection failed(videofile): %s\n", PQresultErrorMessage(result2));
     exit(EXIT_FAILURE);
   }
 
-  char *id = PQgetvalue(result2, 0, 0);
-  char *ts = PQgetvalue(result2, 0, 1);
+  found = PQntuples(result2);
+  if(found == 1) {
+    char *id = PQgetvalue(result2, 0, 0);
+    char *ts = PQgetvalue(result2, 0, 1);
 
-  sscanf(id, "%d", &videofile_id);
-  sscanf(ts, "%ld", &start_ts);
+    sscanf(id, "%d", &videofile_id);
+    sscanf(ts, "%ld", &start_ts);
 
-  *timestamp -= start_ts;
+    *timestamp -= start_ts;
 
-  strftime(date_part, sizeof(date_part), "%Y%m%d/%Y%m%d%H%M%S", localtime(&start_ts));
-  snprintf(fname, 1024, "%s/%s/%s.h264", store_dir, cam_code, date_part);
+    strftime(date_part, sizeof(date_part), "%Y%m%d/%Y%m%d%H%M%S", localtime(&start_ts));
+    snprintf(fname, 1024, "%s/%s/%s.h264", store_dir, cam_code, date_part);
+
+    fprintf(stderr, "Found file: %s at %d\n", fname, (int)*timestamp);
+    ret = 0;
+  } else {
+    fprintf(stderr, "Files found: %d\n", found);
+    ret = -1;
+  }
 
   PQclear(result1);
   PQclear(result2);
+  return ret;
 }

@@ -6,13 +6,14 @@ class VideoServer
     connect
   end
 
-  def show_real_image(cameras)
-    result = send type: 'real', cam_ids: cameras.map(&:id)
+  def show_archive(camera_id, timestamp, session_id=nil)
+    result = send type: 'archive', cam_ids: [camera_id], timestamp: timestamp.to_i, session_id: session_id
     result['session_id']
   end
 
-  def show_archive(session_id, camera_id, timestampt)
-    send type: 'real', cam_ids: cameras.map(&:id)
+  def show_real_image(cameras)
+    result = send type: 'real', cam_ids: cameras.map(&:id)
+    result['session_id']
   end
 
   def stats

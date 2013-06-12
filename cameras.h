@@ -47,7 +47,7 @@ struct motion_detection {
 struct in_out_cpy {
   AVFormatContext *in_ctx;
   AVFormatContext *out_ctx;
-  int in_stream_index;
+  AVStream *in_stream;
   AVStream *out_stream;
   int active;
 };
@@ -78,4 +78,4 @@ struct cam_consumer {
 void error(const char *msg);
 void av_crit(char *msg, int errnum);
 void *recorder_thread(void *ptr);
-void init_screen(struct screen *screen);
+int init_screen(struct screen *screen);

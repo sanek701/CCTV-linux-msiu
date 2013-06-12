@@ -24,27 +24,6 @@
     %object{classid: "clsid:9BE31822-FDAD-461B-AD51-BE1D1C159921", codebase: "http://download.videolan.org/pub/videolan/vlc/last/win32/axvlc.cab"}
 
 .timeline-wrapper
-  .timeline{data: { date: Date.today.to_s, width: 100, seek_url: seek_camera_path(resource) }}
+  .timeline{data: { date: Date.today.to_s, width: 100, seek_url: seek_camera_path(resource), events_url: timeline_entries_camera_path(resource) }}
     .pointer
     .time
-
-- content_for :js do
-  :javascript
-    $(function() {
-      var session_id;
-      var vlc = document.getElementById("vlc");
-      $.ajax({
-        url: "#{timeline_entries_camera_path(resource)}",
-        type: "GET",
-        dataType: 'json',
-        data: { date: $('.timeline').data('date') },
-        success: function(data) {
-          $.each(data.entries, function(i, entry) {
-            $('<div>').attr('class', entry.entry_type)
-              .data('info', {starts_at: entry.started_at, finished_at: entry.finished_at})
-              .css({width: entry.rel_width, marginLeft: entry.rel_margin})
-              .appendTo('.timeline');
-          });
-        }
-      });
-    });

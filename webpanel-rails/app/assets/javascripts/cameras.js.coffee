@@ -1,5 +1,6 @@
 jQuery ->
   $session_id = undefined
+  $vlc = document.getElementById("vlc")
 
   check_cam_cnt = ->
     if $('.camera.selected').length > 0
@@ -12,6 +13,21 @@ jQuery ->
       '0' + n
     else
       n.toString()
+
+  load_events = ->
+    $.ajax {
+      url: $('.timeline').data('events-url'),
+      type: "GET",
+      dataType: 'json',
+      data: { date: $('.timeline').data('date') },
+      success: (data) ->
+        $('.timeline .videofile, .timeline .event').remove()
+        $.each data.entries, (i, entry) ->
+          $('<div>').attr('class', entry.entry_type)
+            .data('info', {starts_at: entry.started_at, finished_at: entry.finished_at})
+            .css({width: entry.rel_width, marginLeft: entry.rel_margin})
+            .appendTo('.timeline');
+    }
 
   $('.cameras.selectable .camera-btn').click ->
     cam = $(this).closest('.camera')
@@ -47,6 +63,17 @@ jQuery ->
       $.post($('.cameras').data('sort-url'), { camera_id: ui.item.data('camera-id'), position: ui.item.index() })
   });
 
+  $('.datepicker').on 'changeDate', (ev)->
+    dd = _02d(ev.date.getDate())
+    mm = _02d(ev.date.getMonth()+1)
+    yyyy = ev.date.getFullYear()
+    $('.timeline').data('date', "#{yyyy}-#{mm}-#{dd}")
+    $('#date').text("#{dd}.#{mm}.#{yyyy}")
+    load_events()
+
+  if $('.timeline').length
+    load_events()
+
   $('.timeline').on 'mousemove', (e) ->
     top = $(this).position().top
     posX = $(this).parent().position().left
@@ -69,9 +96,9 @@ jQuery ->
       dataType: 'json',
       data: { date: that.data('date'), position: that.data('position'), session_id: $session_id },
       success: (data)->
-        if data.url
-          id = @vlc.playlist.add(data.url, "");
-          @vlc.playlist.playItem(id);
+        if data.rtsp
+          id = $vlc.playlist.add(data.rtsp, "");
+          $vlc.playlist.playItem(id);
         if data.session_id
           $session_id = data.session_id;
     }

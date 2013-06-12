@@ -108,9 +108,11 @@ static void parse_command(int client_fd, int *close_conn) {
 
     printf("session_id: %d, type: %d, ncams: %d, timestamp: %ld\n", session_id, type, ncams, timestamp);
 
-    init_screen(screen);
-
-    sprintf(buffer, "{ \"session_id\": %d, \"width\": %d, \"height\": %d }\n", screen->session_id, screen->width, screen->height);
+    if(init_screen(screen) < 0) {
+      sprintf(buffer, "{ \"error\": \"true\" }\n");
+    } else {
+      sprintf(buffer, "{ \"session_id\": %d, \"width\": %d, \"height\": %d }\n", screen->session_id, screen->width, screen->height);
+    }
     snd(client_fd, buffer, close_conn);
   } else if(type == STATS) {
     struct statvfs statvfs_buf;

@@ -6,11 +6,11 @@ unsigned int ports = 0;
 
 extern int should_terminate;
 
-static void open_video_file(struct screen *screen);
+static int open_video_file(struct screen *screen);
 static void init_single_camera_screen(struct screen *screen);
 static void init_multiple_camera_screen(struct screen *screen);
 
-void init_screen(struct screen *screen) {
+int init_screen(struct screen *screen) {
   char gst_pipe[128], path[128];
   int port;
   unsigned int i;
@@ -39,7 +39,8 @@ void init_screen(struct screen *screen) {
       l1_insert(&screen->cams[i]->cam_consumers_list, consumer);
     }
   } else {
-    open_video_file(screen);
+    if(open_video_file(screen) < 0)
+      return -1;
   }
 
   sprintf(gst_pipe, "( filesrc location=/tmp/stream_%d.sdp ! sdpdemux name=dynpay0 )", screen->rtp_port);
@@ -51,6 +52,7 @@ void init_screen(struct screen *screen) {
   gst_rtsp_media_mapping_add_factory(mapping, path, factory);
   gst_rtsp_media_factory_set_shared(factory, TRUE);
   g_object_unref(mapping);
+  return 0;
 }
 
 static void create_sdp(struct screen *screen) {
@@ -153,13 +155,32 @@ static void init_multiple_camera_screen(struct screen *screen) {
 }
 
 static void* copy_input_to_output(void *ptr) {
+  int ret;
   struct in_out_cpy *io = (struct in_out_cpy *)ptr;
   AVPacket packet;
 
+  int frame = 0;
+  int64_t start = av_gettime();
+  int64_t pts = 0, now;
+
+  AVRational frame_rate = io->in_stream->r_frame_rate;
+
   av_init_packet(&packet);
-  while(av_read_frame(io->in_ctx, &packet) >= 0) {
+  while(1) {
+    ret = av_read_frame(io->in_ctx, &packet);
+    if(ret == AVERROR_EOF) {
+      printf("EOF\n");
+      break;
+    }
+    if(ret < 0) {
+      av_crit("av_read_frame", ret);
+    }
+
     packet.stream_index = io->out_stream->id;
-    av_write_frame(io->out_ctx, &packet);
+    packet.dts = av_rescale_q(av_gettime(), AV_TIME_BASE_Q, io->out_stream->time_base);
+
+    if((ret = av_write_frame(io->out_ctx, &packet)) < 0)
+      av_crit("av_write_frame", ret);
 
     av_free_packet(&packet);
     av_init_packet(&packet);
@@ -168,10 +189,16 @@ static void* copy_input_to_output(void *ptr) {
       break;
     if(should_terminate)
       break;
+
+    frame += 1;
+    pts = frame * frame_rate.den * AV_TIME_BASE / frame_rate.num;
+    now = av_gettime() - start;
+
+    if(pts > now) {
+      av_usleep(pts - now);
+    }
   }
 
-  //avcodec_close(io->out_stream->codec);
-  //avcodec_close(io->in_ctx->streams[io->in_stream_index]->codec);
   avio_close(io->out_ctx->pb);
   avformat_close_input(&io->in_ctx);
   avformat_free_context(io->out_ctx);
@@ -179,12 +206,16 @@ static void* copy_input_to_output(void *ptr) {
   return NULL;
 }
 
-static void open_video_file(struct screen *screen) {
+static int open_video_file(struct screen *screen) {
   int ret;
   struct camera *cam = screen->cams[0];
   AVFormatContext *s = avformat_alloc_context();
-  find_video_file(cam->id, s->filename, &screen->timestamp);
 
+  if(find_video_file(cam->id, s->filename, &screen->timestamp) < 0) {
+    avformat_free_context(s);
+    return -1;
+  }
+  
   if((ret = avformat_open_input(&s, s->filename, NULL, NULL)) < 0)
     av_crit("avformat_open_input", ret);
   if((ret = avformat_find_stream_info(s, NULL)) < 0)
@@ -195,13 +226,10 @@ static void open_video_file(struct screen *screen) {
 
   AVStream *input_stream = s->streams[video_stream_index];
   AVCodecContext *codec = input_stream->codec;
+  input_stream->time_base = codec->time_base = AV_TIME_BASE_Q;
+  input_stream->r_frame_rate = cam->input_stream->r_frame_rate;
 
-  input_stream->time_base.den = codec->time_base.den = cam->input_stream->codec->time_base.den;
-  input_stream->time_base.num = codec->time_base.num = cam->input_stream->codec->time_base.num;
-
-  if((ret = av_seek_frame(s, video_stream_index, av_rescale_q((int64_t)screen->timestamp, AV_TIME_BASE_Q, input_stream->time_base), 0)) < 0)
-    av_crit("av_seek_frame", ret);
-
+  // TODO: here must be seek
 
   AVFormatContext *rtp_context;
   AVOutputFormat *rtp_fmt;
@@ -226,7 +254,7 @@ static void open_video_file(struct screen *screen) {
   struct in_out_cpy *io = (struct in_out_cpy*)malloc(sizeof(struct in_out_cpy));
   io->in_ctx = s;
   io->out_ctx = rtp_context;
-  io->in_stream_index = video_stream_index;
+  io->in_stream = input_stream;
   io->out_stream = rtp_stream;
   io->active = 1;
 
@@ -241,6 +269,9 @@ static void open_video_file(struct screen *screen) {
   screen->width = cam->codec->width;
   screen->height = cam->codec->height;
   screen->io = io;
+
+  create_sdp(screen);
+  return 0;
 }
 
 static gboolean timeout(GstRTSPServer *server, gboolean ignored) {

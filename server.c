@@ -27,7 +27,7 @@ void error(const char *msg) {
 
 void av_crit(char *msg, int errnum) {
   char errbuf[2048];
-  fprintf(stderr, "%s\n", msg);
+  fprintf(stderr, "%s errnum: %d\n", msg, errnum);
   if(errnum != 0 && av_strerror(errnum, errbuf, sizeof(errbuf)) == 0) {
     fprintf(stderr, "%s\n", errbuf);
   }

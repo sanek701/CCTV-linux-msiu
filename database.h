@@ -4,4 +4,4 @@ struct camera* select_cameras(int *ncams);
 void create_event(int cam_id, time_t raw_started_at, time_t raw_finished_at);
 void create_videofile(struct camera *cam, char *filepath);
 void update_videofile(struct camera *cam);
-void find_video_file(int cam_id, char *fname, time_t *timestamp);
+int find_video_file(int cam_id, char *fname, time_t *timestamp);

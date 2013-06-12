@@ -9,6 +9,7 @@ class CamerasController < InheritedResources::Base
     day_len = 24*60*60.0
     entries = (camera.events.where("started_at >= ? AND finished_at < ?", date, date+1.day).all +
     camera.videofiles.where("started_at >= ? AND (finished_at < ? OR finished_at IS NULL)", date, date+1.day).all).map do |entry|
+      next if entry.started_at.day != date.day
       entry.finished_at = Time.now if entry.is_a?(Videofile) && entry.finished_at.nil?
 
       rel_margin = ((entry.started_at.to_i - date.to_i) / day_len).round(4)*100
@@ -23,7 +24,7 @@ class CamerasController < InheritedResources::Base
         rel_width: "#{rel_width}%"
       }
     end
-    render json: { entries: entries }
+    render json: { entries: entries.compact }
   end
 
   def seek
@@ -33,15 +34,16 @@ class CamerasController < InheritedResources::Base
     session_id = params[:session_id].try(:to_i)
     date += position.seconds
 
-    VIDEO_SERVER
+    session_id = VIDEO_SERVER.show_archive(camera.id, date, session_id)
+    render json: { rtsp: "rtsp://#{request.host}:8554/stream_#{session_id}", session_id: session_id }
   end
 
   def watch
     template = params[:template]
     cameras = Camera.find(params[:ids].split(','))
 
-    session_id = VIDEO_SERVER.show_real_image(cameras)
-    @rtsp_link = "rtsp://#{request.host}:8554/stream_#{session_id}"
+    @session_id = VIDEO_SERVER.show_real_image(cameras)
+    @rtsp_link = "rtsp://#{request.host}:8554/stream_#{@session_id}"
   end
 
   def select
