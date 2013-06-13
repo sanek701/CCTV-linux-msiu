@@ -30,7 +30,7 @@ class VideoServer
   end
 
   def send(h, retrying=false)
-    @s.puts(h.to_json)
+    @s.puts(h.to_json + "\n\n")
     JSON.parse(@s.gets)
   rescue Exception => e
     raise(e) if retrying

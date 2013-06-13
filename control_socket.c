@@ -8,6 +8,9 @@
 #include "cameras.h"
 #include "json.h"
 
+#define MAX_CLIENTS 10
+#define BUF_SIZE 1024
+
 extern struct camera *cameras;
 extern int n_cameras;
 extern int should_terminate;
@@ -16,10 +19,11 @@ extern char *store_dir;
 static struct sockaddr_un address, client;
 static int socket_fd, connection_fd;
 static socklen_t address_length;
-static struct pollfd fds[10];
+static struct pollfd fds[MAX_CLIENTS + 1];
 static int nfds = 1, rc;
 static int timeout = 5000;
-static char buffer[2048];
+static int reads[MAX_CLIENTS];
+static char buffer[BUF_SIZE * MAX_CLIENTS];
 static unsigned int session_id = 0;
 
 static time_t last_disk_space_check = 0;
@@ -55,7 +59,7 @@ static void snd(int fd, char *buffer, int *close_conn) {
   }
 }
 
-static void parse_command(int client_fd, int *close_conn) {
+static void parse_command(char *buf, int client_fd, int *close_conn) {
   json_settings settings;
   char error[256];
   int i;
@@ -69,11 +73,11 @@ static void parse_command(int client_fd, int *close_conn) {
   struct screen *screen = NULL;
 
   memset(&settings, 0, sizeof (json_settings));
-  json_value *json = json_parse_ex(&settings, buffer, strlen(buffer), error);
+  json_value *json = json_parse_ex(&settings, buf, strlen(buf), error);
 
   if(json == NULL) {
     fprintf(stderr, "Json error: %s\n", error);
-    fprintf(stderr, "buffer: %s\n", buffer);
+    fprintf(stderr, "buffer: %s\n", buf);
   }
 
   for(i=0; i < json->u.object.length; i++) {
@@ -121,24 +125,24 @@ static void parse_command(int client_fd, int *close_conn) {
     printf("session_id: %d, type: %d, ncams: %d, timestamp: %ld\n", session_id, type, ncams, timestamp);
 
     if(init_screen(screen) < 0) {
-      sprintf(buffer, "{ \"error\": \"true\" }\n");
+      sprintf(buf, "{ \"error\": \"true\" }\n");
     } else {
-      sprintf(buffer, "{ \"session_id\": %d, \"width\": %d, \"height\": %d }\n", screen->session_id, screen->width, screen->height);
+      sprintf(buf, "{ \"session_id\": %d, \"width\": %d, \"height\": %d }\n", screen->session_id, screen->width, screen->height);
     }
-    snd(client_fd, buffer, close_conn);
+    snd(client_fd, buf, close_conn);
   } else if(type == STATS) {
     struct statvfs statvfs_buf;
     if(statvfs(store_dir, &statvfs_buf) < 0) {
       perror("statvfs");
       return;
     }
-    sprintf(buffer, "{ \"free_space\": %llu, \"tolal_space\": %llu, \"ncams\": %d }\n",
+    sprintf(buf, "{ \"free_space\": %llu, \"tolal_space\": %llu, \"ncams\": %d }\n",
       (unsigned long long)statvfs_buf.f_bsize * statvfs_buf.f_bavail,
       (unsigned long long)statvfs_buf.f_bsize * statvfs_buf.f_blocks, n_cameras);
-    snd(client_fd, buffer, close_conn);
+    snd(client_fd, buf, close_conn);
   } else if(type == CAM_INFO) {
-    sprintf(buffer, "{ \"error\": \"not implemented\" }\n");
-    snd(client_fd, buffer, close_conn);
+    sprintf(buf, "{ \"error\": \"not implemented\" }\n");
+    snd(client_fd, buf, close_conn);
   }
 }
 
@@ -146,6 +150,7 @@ void control_socket_init() {
   int flags, on = 1;
   memset(&address, 0, address_length);
   memset(&fds, 0 , sizeof(fds));
+  memset(&reads, 0 , sizeof(int) * MAX_CLIENTS);
   address.sun_family = AF_UNIX;
   strcpy(address.sun_path, "/tmp/videoserver");
   unlink(address.sun_path);
@@ -167,7 +172,8 @@ void control_socket_init() {
 
 void control_socket_loop() {
   int current_size, close_conn, compress_array = 0;
-  int i,j,flags;
+  int i,j,k,ns,rd,flags;
+  char *buf;
 
   address_length = sizeof(struct sockaddr_un);
   fds[0].fd = socket_fd;
@@ -214,7 +220,9 @@ void control_socket_loop() {
 
         close_conn = 0;
         do {
-          rc = recv(fds[i].fd, buffer, sizeof(buffer), 0);
+          rd = reads[i-1];
+          buf = buffer + (i-1) * BUF_SIZE;
+          rc = recv(fds[i].fd, buf + rd, BUF_SIZE - rd, 0);
           if(rc < 0) {
             if(errno == EINTR) continue;
             if(errno != EWOULDBLOCK) {
@@ -229,9 +237,26 @@ void control_socket_loop() {
             break;
           }
 
-          buffer[rc] = '\0';
+          ns = 0;
 
-          parse_command(fds[i].fd, &close_conn);
+          if(rd > 0 && buf[rd-1] == '\n')
+            ns += 1;
+
+          reads[i-1] += rc;
+
+          for(j = rd, k = rc; k>0; k--, j++) {
+            if(buf[j] == '\n')
+              ns += 1;
+            else
+              ns = 0;
+            if(ns == 2) {
+              buf[rd + rc] = '\0';
+              reads[i-1] = 0;
+              parse_command(buf, fds[i].fd, &close_conn);
+              break;
+            }
+          }
+          
           if(close_conn) break;
         } while(rc > 0);
 
