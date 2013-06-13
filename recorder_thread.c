@@ -45,11 +45,10 @@ static void open_camera(struct camera *cam) {
 }
 
 static void open_output(struct camera *cam) {
-  int ret = 0;
-  //AVDictionary *av_opts = NULL;
   AVFormatContext *s;
   AVOutputFormat *ofmt;
   AVStream *ost;
+  int ret;
 
   s = avformat_alloc_context();
 
@@ -57,7 +56,7 @@ static void open_output(struct camera *cam) {
     av_crit("av_guess_format", 0);
   s->oformat = ofmt;
 
-  create_videofile(cam, s->filename);
+  db_create_videofile(cam, s->filename);
 
   if((ret = avio_open2(&s->pb, s->filename, AVIO_FLAG_WRITE, NULL, NULL)) < 0)
     av_crit("avio_open2", ret);
@@ -77,21 +76,19 @@ static void open_output(struct camera *cam) {
   if(ofmt->flags & AVFMT_GLOBALHEADER)
     ost->codec->flags |= CODEC_FLAG_GLOBAL_HEADER;
 
-  if((ret = avformat_write_header(s, NULL)) < 0) //&av_opts
+  if((ret = avformat_write_header(s, NULL)) < 0)
     av_crit("avformat_write_header", ret);
 
   cam->output_context = s;
   cam->output_stream = ost;
-  
-  //av_dict_free(&av_opts);
 }
-
-int video_stream_index;
-AVFormatContext *rd;
-AVStream *st;
 
 static void close_output(struct camera *cam) {
   int ret;
+
+  // TODO: create h264 read context
+  // TODO: create mp4 write context
+
   if((ret = av_write_trailer(cam->output_context)) < 0)
     av_crit("av_write_trailer", ret);
   if((ret = avcodec_close(cam->output_stream->codec)) < 0)
@@ -99,7 +96,10 @@ static void close_output(struct camera *cam) {
   if((ret = avio_close(cam->output_context->pb)) < 0)
     av_crit("avio_close", ret);
   avformat_free_context(cam->output_context);
+
+  // TODO: copy h264 to mp4, update DB, unlink mp4
 }
+
 
 static int detect_motion(struct motion_detection *md, AVFrame *frame) {
   IplImage *tmp;
@@ -119,7 +119,7 @@ static int detect_motion(struct motion_detection *md, AVFrame *frame) {
 
   int density = 0;
   for(int i=0; i < md->silh->height; i++) {
-    uint8_t* ptr = md->silh->imageData + i * md->silh->widthStep;
+    uint8_t* ptr = (uint8_t*)md->silh->imageData + i * md->silh->widthStep;
     for(int j=0; j < md->silh->width; j++)
       if(*(ptr+j) > 0)
         density += 1;
@@ -130,8 +130,6 @@ static int detect_motion(struct motion_detection *md, AVFrame *frame) {
   } else {
     return 0;
   }
-
-  //avpicture_free(&pict);
 }
 
 void *recorder_thread(void *ptr) {
@@ -170,6 +168,7 @@ void *recorder_thread(void *ptr) {
   if(!frame)
     av_crit("avcodec_alloc_frame", 0);
   av_init_packet(&packet);
+
   while(1) {
     cam->last_io = time(NULL);
     ret = av_read_frame(cam->context, &packet);
@@ -200,7 +199,7 @@ void *recorder_thread(void *ptr) {
           } else {
             if(first_activity > 0 && time(NULL) - last_activity > cam->motion_delay) {
               if(!first_detection)
-                create_event(cam->id, first_activity, last_activity);
+                db_create_event(cam->id, first_activity, last_activity);
               else
                 first_detection = 0;
               first_activity = 0;
@@ -241,15 +240,16 @@ void *recorder_thread(void *ptr) {
     }
 
     if(time(NULL) - cam->file_started_at > 60*60) {
-      update_videofile(cam);
+      db_update_videofile(cam);
       close_output(cam);
       open_output(cam);
       got_key_frame = 0;
     }
   }
 
-  update_videofile(cam);
+  db_update_videofile(cam);
   close_output(cam);
+
   if((ret = avcodec_close(cam->codec)) < 0)
     av_crit("avcodec_close", ret);
   avformat_close_input(&cam->context);

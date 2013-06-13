@@ -9,6 +9,10 @@
 #define ARCHIVE 1
 #define REAL 2
 #define STATS 3
+#define CAM_INFO 4
+
+#define MP4_FILE 100
+#define H264_FILE 101
 
 struct camera {
     int id;
@@ -79,3 +83,4 @@ void error(const char *msg);
 void av_crit(char *msg, int errnum);
 void *recorder_thread(void *ptr);
 int init_screen(struct screen *screen);
+void *start_rtsp_server(void* ptr);

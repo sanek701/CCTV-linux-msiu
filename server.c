@@ -2,8 +2,6 @@
 #include <errno.h>
 #include <strings.h>
 #include <signal.h>
-#include <sys/statvfs.h>
-#include <sys/time.h>
 #include "cameras.h"
 #include "control_socket.h"
 
@@ -31,15 +29,7 @@ void av_crit(char *msg, int errnum) {
   if(errnum != 0 && av_strerror(errnum, errbuf, sizeof(errbuf)) == 0) {
     fprintf(stderr, "%s\n", errbuf);
   }
-  exit(EXIT_FAILURE);
-}
-
-static void check_disk_space() {
-  struct statvfs statvfs_buf;
-  if(statvfs(store_dir, &statvfs_buf) < 0) {
-    perror("statvfs");
-  }
-  printf("Free space on device: %llu\n", (unsigned long long)statvfs_buf.f_bsize * statvfs_buf.f_bavail);
+  //exit(EXIT_FAILURE);
 }
 
 int main(int argc, char** argv) {
@@ -50,7 +40,7 @@ int main(int argc, char** argv) {
 
   gst_init(&argc, &argv);
 
-  initialize_control_socket();
+  control_socket_init();
   fprintf(stderr, "Control socket initialized\n");
 
   signal(SIGINT, terminate);
@@ -63,9 +53,9 @@ int main(int argc, char** argv) {
 
   fprintf(stderr, "FFmpeg initialized\n");
 
-  init_pg_conn(argv[1]);
+  db_init_pg_conn(argv[1]);
 
-  cameras = select_cameras(&n_cameras);
+  cameras = db_select_cameras(&n_cameras);
 
   pthread_t *threads = (pthread_t *)malloc(n_cameras * sizeof(pthread_t));
 
@@ -94,9 +84,10 @@ int main(int argc, char** argv) {
   }
   free(cameras);
   free(threads);
+
   avformat_network_deinit();
-  close_pg_conn();
-  close_control_socket();
+  db_close_pg_conn();
+  control_socket_close();
 
   fprintf(stderr, "Terminated.\n");
   return (EXIT_SUCCESS);

@@ -22,6 +22,16 @@ static int timeout = 5000;
 static char buffer[2048];
 static unsigned int session_id = 0;
 
+static time_t last_disk_space_check = 0;
+
+static void check_disk_space() {
+  struct statvfs statvfs_buf;
+  if(statvfs(store_dir, &statvfs_buf) < 0) {
+    perror("statvfs");
+  }
+  printf("Free space on device: %llu\n", (unsigned long long)statvfs_buf.f_bsize * statvfs_buf.f_bavail);
+}
+
 static struct camera** get_cams_by_ids(int *cam_ids, int ncams) {
   int i, j;
   struct camera **cams = (struct camera **)malloc(ncams * sizeof(struct camera *));
@@ -72,12 +82,14 @@ static void parse_command(int client_fd, int *close_conn) {
 
     if(strcmp(key, "type") == 0) {
       char *string_value = value->u.string.ptr;
-      if(strcmp(string_value, "archive")==0)
+      if(strcmp(string_value, "archive") == 0)
         type = ARCHIVE;
-      else if(strcmp(string_value, "real")==0)
+      else if(strcmp(string_value, "real") == 0)
         type = REAL;
-      else if(strcmp(string_value, "stats")==0)
+      else if(strcmp(string_value, "stats") == 0)
         type = STATS;
+      else if(strcmp(string_value, "cam_info") == 0)
+        type = CAM_INFO;
     } else if (strcmp(key, "cam_ids") == 0) {
       ncams = value->u.array.length;
       cam_ids = (int*)malloc(ncams * sizeof(int));
@@ -124,10 +136,13 @@ static void parse_command(int client_fd, int *close_conn) {
       (unsigned long long)statvfs_buf.f_bsize * statvfs_buf.f_bavail,
       (unsigned long long)statvfs_buf.f_bsize * statvfs_buf.f_blocks, n_cameras);
     snd(client_fd, buffer, close_conn);
+  } else if(type == CAM_INFO) {
+    sprintf(buffer, "{ \"error\": \"not implemented\" }\n");
+    snd(client_fd, buffer, close_conn);
   }
 }
 
-void initialize_control_socket() {
+void control_socket_init() {
   int flags, on = 1;
   memset(&address, 0, address_length);
   memset(&fds, 0 , sizeof(fds));
@@ -159,6 +174,11 @@ void control_socket_loop() {
   fds[0].events = POLLIN;
 
   while(!should_terminate) {
+    if(time(NULL) - last_disk_space_check > 60) {
+      check_disk_space();
+      last_disk_space_check = time(NULL);
+    }
+
     if((rc = poll(fds, nfds, timeout)) < 0) {
       if(errno == EINTR) continue;
       else error("poll");
@@ -238,7 +258,7 @@ void control_socket_loop() {
   }
 }
 
-void close_control_socket() {
+void control_socket_close() {
   int i;
   for (i = 0; i < nfds; i++) {
     if(fds[i].fd >= 0)

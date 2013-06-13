@@ -31,7 +31,7 @@ static void print_camera(struct camera *cam) {
     cam->id, cam->url, cam->analize_frames, cam->threshold, cam->motion_delay);
 }
 
-void init_pg_conn(const char *conf_file) {
+void db_init_pg_conn(const char *conf_file) {
   if(config_read_file(&config, conf_file) != CONFIG_TRUE) {
     fprintf(stderr, "%s:%d %s\n", config_error_file(&config), config_error_line(&config), config_error_text(&config));
     config_destroy(&config);
@@ -64,13 +64,13 @@ void init_pg_conn(const char *conf_file) {
   }
 }
 
-void close_pg_conn() {
+void db_close_pg_conn() {
   PQfinish(conn);
   pthread_mutex_destroy(&db_lock);
   free(store_dir);
 }
 
-struct camera* select_cameras(int *ncams) {
+struct camera* db_select_cameras(int *ncams) {
   int i;
   int n_cameras;
   struct camera* cameras;
@@ -113,7 +113,7 @@ struct camera* select_cameras(int *ncams) {
   return cameras;
 }
 
-void create_event(int cam_id, time_t raw_started_at, time_t raw_finished_at) {
+void db_create_event(int cam_id, time_t raw_started_at, time_t raw_finished_at) {
   char query[256];
   snprintf(query, sizeof(query),
     "INSERT INTO events(camera_id, started_at, finished_at) VALUES (%u, to_timestamp(%ld) at time zone 'UTC', to_timestamp(%ld) at time zone 'UTC');",
@@ -128,7 +128,7 @@ void create_event(int cam_id, time_t raw_started_at, time_t raw_finished_at) {
   PQclear(result);
 }
 
-void create_videofile(struct camera *cam, char *filepath) {
+void db_create_videofile(struct camera *cam, char *filepath) {
   char query[256], date[11], datetime[15];
   cam->file_started_at = time(NULL);
   snprintf(query, sizeof(query), "INSERT INTO videofiles(camera_id, started_at) VALUES (%u, to_timestamp(%ld) at time zone 'UTC') RETURNING (id);",
@@ -155,7 +155,7 @@ void create_videofile(struct camera *cam, char *filepath) {
   snprintf(filepath, 1024, "%s/%s/%s/%s.h264", store_dir, cam->name, date, datetime);
 }
 
-void update_videofile(struct camera *cam) {
+void db_update_videofile(struct camera *cam) {
   char query[256];
   snprintf(query, sizeof(query), "UPDATE videofiles SET finished_at = to_timestamp(%ld) at time zone 'UTC' WHERE id = %d;",
     time(NULL), cam->file_id);
@@ -167,7 +167,7 @@ void update_videofile(struct camera *cam) {
   PQclear(result);
 }
 
-int find_video_file(int cam_id, char *fname, time_t *timestamp) {
+int db_find_video_file(int cam_id, char *fname, time_t *timestamp) {
   char query[256], date_part[32];
   time_t start_ts;
   int videofile_id;
