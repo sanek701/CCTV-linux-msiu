@@ -20,6 +20,10 @@ class VideoServer
     send type: 'stats'
   end
 
+  def cam_info(camera_id)
+    send type: 'cam_info', cam_ids: [camera_id]
+  end
+
   private
 
   def connect(reconnect = false)

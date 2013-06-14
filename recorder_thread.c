@@ -1,8 +1,11 @@
 #include <highgui.h>
 #include <libswscale/swscale.h>
 #include "cameras.h"
+#include "file_reader.h"
 
 extern char *store_dir;
+extern l1 *h264_to_mp4_tasks;
+extern pthread_mutex_t tasks_lock;
 
 static int interrupt_callback(void *opaque) {
   struct camera *cam = opaque;
@@ -10,62 +13,43 @@ static int interrupt_callback(void *opaque) {
   return 0;
 }
 
-static int open_input(AVFormatContext *s, AVDictionary **opts) {
-  int ret;
-  AVCodec *dec;
-  int video_stream_index;
-  if((ret = avformat_open_input(&s, s->filename, NULL, opts)) < 0)
-    av_crit("avformat_open_input", ret);
-  if((ret = avformat_find_stream_info(s, NULL)) < 0)
-    av_crit("avformat_find_stream_info", ret);
-  video_stream_index = av_find_best_stream(s, AVMEDIA_TYPE_VIDEO, -1, -1, &dec, 0);
-  if(video_stream_index < 0)
-    av_crit("av_find_best_stream", video_stream_index);
-  if((ret = avcodec_open2(s->streams[video_stream_index]->codec, dec, NULL)) < 0) {
-    av_crit("avcodec_open2", ret);
-  }
-  return video_stream_index;
-}
-
-static void open_camera(struct camera *cam) {
-  int ret = 0;
+static int open_camera(struct camera *cam) {
+  int ret = 0, v_st_i;
   AVDictionary *opts = NULL;
-  if((ret = av_dict_set(&opts, "rtsp_transport", "tcp", 0)) < 0)
-    av_crit("av_dict_set", ret);
+
+  if((ret = av_dict_set(&opts, "rtsp_transport", "tcp", 0)) < 0) {
+    av_err_msg ("av_dict_set", ret);
+    return -1;
+  }
+
   cam->context = avformat_alloc_context();
   snprintf(cam->context->filename, sizeof(cam->context->filename), "%s", cam->url);
   cam->context->interrupt_callback.callback = &interrupt_callback;
   cam->context->interrupt_callback.opaque = cam;
   cam->last_io = time(NULL);
 
-  cam->video_stream_index = open_input(cam->context, &opts);
+  if((v_st_i = open_input(cam->context, &opts)) < 0)
+    return -1;
+
+  cam->video_stream_index = v_st_i;
   cam->input_stream = cam->context->streams[cam->video_stream_index];
   cam->codec = cam->input_stream->codec;
   av_dict_free(&opts);
+
+  return 0;
 }
 
-static void open_output(struct camera *cam) {
-  AVFormatContext *s;
-  AVOutputFormat *ofmt;
-  AVStream *ost;
+static AVStream* copy_ctx_from_input(AVFormatContext *s, struct camera *cam) {
   int ret;
-
-  s = avformat_alloc_context();
-
-  if((ofmt = av_guess_format("h264", NULL, NULL)) == NULL)
-    av_crit("av_guess_format", 0);
-  s->oformat = ofmt;
-
-  db_create_videofile(cam, s->filename);
-
-  if((ret = avio_open2(&s->pb, s->filename, AVIO_FLAG_WRITE, NULL, NULL)) < 0)
-    av_crit("avio_open2", ret);
-
-  ost = avformat_new_stream(s, (AVCodec *)cam->codec->codec);
-  if(ost == NULL)
-    av_crit("avformat_new_stream", 0);
-  if((ret = avcodec_copy_context(ost->codec, (const AVCodecContext *)cam->codec)) < 0)
-    av_crit("avcodec_copy_context", ret);
+  AVStream* ost = avformat_new_stream(s, (AVCodec *)cam->codec->codec);
+  if(ost == NULL) {
+    av_err_msg("avformat_new_stream", 0);
+    return NULL;
+  }
+  if((ret = avcodec_copy_context(ost->codec, (const AVCodecContext *)cam->codec)) < 0) {
+    av_err_msg("avcodec_copy_context", ret);
+    return NULL;
+  }
 
   ost->sample_aspect_ratio = cam->codec->sample_aspect_ratio;
   ost->r_frame_rate        = cam->input_stream->r_frame_rate;
@@ -73,31 +57,103 @@ static void open_output(struct camera *cam) {
   ost->time_base           = cam->input_stream->time_base;
   ost->codec->time_base    = ost->time_base;
   
-  if(ofmt->flags & AVFMT_GLOBALHEADER)
+  if(s->oformat->flags & AVFMT_GLOBALHEADER)
     ost->codec->flags |= CODEC_FLAG_GLOBAL_HEADER;
 
-  if((ret = avformat_write_header(s, NULL)) < 0)
-    av_crit("avformat_write_header", ret);
+  return ost;
+}
+
+static int open_output(struct camera *cam) {
+  AVFormatContext *s;
+  AVStream *ost;
+  int ret;
+
+  s = avformat_alloc_context();
+
+  if((s->oformat = av_guess_format("h264", NULL, NULL)) == NULL) {
+    av_err_msg("av_guess_format", 0);
+    avformat_free_context(s);
+    return -1;
+  }
+
+  db_create_videofile(cam, s->filename);
+
+  if((ret = avio_open2(&s->pb, s->filename, AVIO_FLAG_WRITE, NULL, NULL)) < 0) {
+    av_err_msg("avio_open2", ret);
+    avformat_free_context(s);
+    return -1;
+  }
+  if((ost = copy_ctx_from_input(s, cam)) == NULL) {
+    fprintf(stderr, "copy_ctx_from_input failed\n");
+    avformat_free_context(s);
+    return -1;
+  }
+  if((ret = avformat_write_header(s, NULL)) < 0) {
+    av_err_msg("avformat_write_header", ret);
+    avformat_free_context(s);
+    return -1;
+  }
 
   cam->output_context = s;
   cam->output_stream = ost;
+  return 0;
+}
+
+static AVStream* init_mp4_output(AVFormatContext *s, struct camera *cam) {
+  int ret;
+  AVStream *ost;
+  strcpy(s->filename + strlen(s->filename) - 4, "mp4");
+  if((s->oformat = av_guess_format("mp4", NULL, NULL)) == NULL) {
+    av_err_msg("av_guess_format", 0);
+    return NULL;
+  }
+  if((ret = avio_open2(&s->pb, s->filename, AVIO_FLAG_WRITE, NULL, NULL)) < 0) {
+    av_err_msg("avio_open2", ret);
+    return NULL;
+  }
+  if((ost = copy_ctx_from_input(s, cam)) == NULL) {
+    fprintf(stderr, "copy_ctx_from_input failed\n");
+    return NULL;
+  }
+  if((ret = avformat_write_header(s, NULL)) < 0) {
+    av_err_msg("avformat_write_header", ret);
+    avformat_free_context(s);
+    return NULL;
+  }
+  return ost;
 }
 
 static void close_output(struct camera *cam) {
   int ret;
 
-  // TODO: create h264 read context
-  // TODO: create mp4 write context
+  AVFormatContext *rd = avformat_alloc_context();
+  AVFormatContext *wr = avformat_alloc_context();
+  strcpy(rd->filename, cam->output_context->filename);
+  strcpy(wr->filename, cam->output_context->filename);
+
+  AVStream *ist = init_h264_read_ctx(rd, cam);
+  AVStream *ost = init_mp4_output(wr, cam);
+
+  if(ist != NULL && ost != NULL) {
+    struct in_out_cpy* io = (struct in_out_cpy*)malloc(sizeof(struct in_out_cpy));
+    io->in_ctx = rd;
+    io->out_ctx = wr;
+    io->in_stream = ist;
+    io->out_stream = ost;
+    io->rate_emu = 0;
+    io->active = 1;
+    l1_insert(&h264_to_mp4_tasks, &tasks_lock, io);
+  } else {
+    fprintf(stderr, "init_h264_read_ctx or init_mp4_output failed\n");
+  }
 
   if((ret = av_write_trailer(cam->output_context)) < 0)
-    av_crit("av_write_trailer", ret);
+    av_err_msg("av_write_trailer", ret);
   if((ret = avcodec_close(cam->output_stream->codec)) < 0)
-    av_crit("avcodec_close", ret);
+    av_err_msg("avcodec_close", ret);
   if((ret = avio_close(cam->output_context->pb)) < 0)
-    av_crit("avio_close", ret);
+    av_err_msg("avio_close", ret);
   avformat_free_context(cam->output_context);
-
-  // TODO: copy h264 to mp4, update DB, unlink mp4
 }
 
 
@@ -142,8 +198,10 @@ void *recorder_thread(void *ptr) {
   time_t first_activity = 0;
   time_t last_activity = 0;
 
-  open_camera(cam);
-  open_output(cam);
+  if(open_camera(cam) < 0)
+    return NULL;
+  if(open_output(cam) < 0)
+    return NULL;
 
   av_dump_format(cam->context, 0, cam->context->filename, 0);
   av_dump_format(cam->output_context, 0, cam->output_context->filename, 1);
@@ -165,8 +223,10 @@ void *recorder_thread(void *ptr) {
 
   int got_key_frame = 0, first_detection = 1;
   frame = avcodec_alloc_frame();
-  if(!frame)
-    av_crit("avcodec_alloc_frame", 0);
+  if(!frame) {
+    av_err_msg("avcodec_alloc_frame", 0);
+    return NULL;
+  }
   av_init_packet(&packet);
 
   while(1) {
@@ -174,7 +234,7 @@ void *recorder_thread(void *ptr) {
     ret = av_read_frame(cam->context, &packet);
     if(ret < 0) {
       if(ret == AVERROR_EOF) break;
-      else av_crit("av_read_frame", ret);
+      else av_err_msg("av_read_frame", ret);
     }
 
     if(packet.stream_index == cam->video_stream_index) {
@@ -190,7 +250,7 @@ void *recorder_thread(void *ptr) {
       cnt = (cnt + 1) % cam->analize_frames;
       if(cnt == 0) {
         if((ret = avcodec_decode_video2(cam->codec, frame, &got_frame, &packet)) < 0)
-          av_crit("avcodec_decode_video2", ret);
+          av_err_msg("avcodec_decode_video2", ret);
 
         if(got_frame) {
           if(detect_motion(&md, frame)) {
@@ -217,14 +277,14 @@ void *recorder_thread(void *ptr) {
 
       packet.stream_index = cam->output_stream->id;
       if((ret = av_write_frame(cam->output_context, &packet)) < 0)
-        av_crit("av_write_frame", ret);
+        av_err_msg("av_write_frame", ret);
 
       for(l1 *p = cam->cam_consumers_list; p != NULL; p = p->next) {
         struct cam_consumer *consumer = (struct cam_consumer *)p->value;
         if(consumer->screen->ncams == 1) {
           packet.stream_index = consumer->screen->rtp_stream->id;
           if((ret = av_write_frame(consumer->screen->rtp_context, &packet)) < 0)
-            av_crit("av_write_frame", ret);
+            av_err_msg("av_write_frame", ret);
         } else {
           // decode frame
           // rescame image
@@ -239,7 +299,7 @@ void *recorder_thread(void *ptr) {
       break;
     }
 
-    if(time(NULL) - cam->file_started_at > 60*60) {
+    if(time(NULL) - cam->file_started_at > 60 * 60) {
       db_update_videofile(cam);
       close_output(cam);
       open_output(cam);
@@ -251,7 +311,7 @@ void *recorder_thread(void *ptr) {
   close_output(cam);
 
   if((ret = avcodec_close(cam->codec)) < 0)
-    av_crit("avcodec_close", ret);
+    av_err_msg("avcodec_close", ret);
   avformat_close_input(&cam->context);
   av_free(frame);
 

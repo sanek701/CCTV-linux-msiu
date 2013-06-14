@@ -37,6 +37,7 @@ struct camera {
     time_t last_screenshot;
 
     l1* cam_consumers_list;
+    pthread_mutex_t consumers_lock;
 };
 
 struct motion_detection {
@@ -54,6 +55,8 @@ struct in_out_cpy {
   AVStream *in_stream;
   AVStream *out_stream;
   int active;
+  int rate_emu;
+  int file_id;
 };
 
 struct screen {
@@ -79,8 +82,10 @@ struct cam_consumer {
     int position;
 };
 
-void error(const char *msg);
-void av_crit(char *msg, int errnum);
-void *recorder_thread(void *ptr);
-int init_screen(struct screen *screen);
-void *start_rtsp_server(void* ptr);
+void  error(const char *msg);
+void  av_err_msg(char *msg, int errnum);
+void* recorder_thread(void *ptr);
+int   init_screen(struct screen *screen);
+void* start_rtsp_server(void* ptr);
+void* start_h264_to_mp4_service(void *ptr);
+AVStream* init_h264_read_ctx(AVFormatContext *s, struct camera *cam);

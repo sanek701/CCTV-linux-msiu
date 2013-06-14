@@ -10,6 +10,8 @@ int n_cameras = 0;
 int should_terminate = 0;
 char *store_dir;
 
+extern int terminate_h264_to_mp4_service;
+
 void terminate(int signal) {
   fprintf(stderr, "Terminating...\n");
   for(int i=0; i < n_cameras; i++) {
@@ -23,13 +25,12 @@ void error(const char *msg) {
   exit(EXIT_FAILURE);
 }
 
-void av_crit(char *msg, int errnum) {
+void av_err_msg(char *msg, int errnum) {
   char errbuf[2048];
   fprintf(stderr, "%s errnum: %d\n", msg, errnum);
   if(errnum != 0 && av_strerror(errnum, errbuf, sizeof(errbuf)) == 0) {
     fprintf(stderr, "%s\n", errbuf);
   }
-  //exit(EXIT_FAILURE);
 }
 
 int main(int argc, char** argv) {
@@ -49,7 +50,6 @@ int main(int argc, char** argv) {
   av_register_all();
   avcodec_register_all();
   avformat_network_init();
-  // avdevice_register_all(); //Register all devices
 
   fprintf(stderr, "FFmpeg initialized\n");
 
@@ -69,19 +69,27 @@ int main(int argc, char** argv) {
   pthread_t rtsp_server_thread;
   if(pthread_create(&rtsp_server_thread, NULL, start_rtsp_server, NULL) < 0)
     error("pthread_create");
-  if(pthread_detach(rtsp_server_thread) < 0)
-    error("pthread_detach");
+
+
+  pthread_t h264_to_mp4_thread;
+  if(pthread_create(&h264_to_mp4_thread, NULL, start_h264_to_mp4_service, NULL) < 0)
+    error("pthread_create");
 
   control_socket_loop();
 
   for(int i=0; i < n_cameras; i++) {
     pthread_join(threads[i], NULL);
-  }
-
-  for(int i=0; i < n_cameras; i++) {
     free(cameras[i].url);
     free(cameras[i].name);
+    pthread_mutex_destroy(&cameras[i].consumers_lock);
   }
+
+  terminate_h264_to_mp4_service = 1;
+  //pthread_join(rtsp_server_thread, NULL);
+  //printf("rtsp_server_thread shutted down\n");
+  pthread_join(h264_to_mp4_thread, NULL);
+  printf("h264_to_mp4_thread shutted down\n");
+
   free(cameras);
   free(threads);
 

@@ -1,4 +1,5 @@
 #include "cameras.h"
+#include "file_reader.h"
 
 GstRTSPServer *server;
 unsigned int ports = 0;
@@ -6,7 +7,6 @@ unsigned int ports = 0;
 static int open_video_file(struct screen *screen);
 static void init_single_camera_screen(struct screen *screen);
 static void init_multiple_camera_screen(struct screen *screen);
-void* copy_input_to_output(void *ptr);
 
 int init_screen(struct screen *screen) {
   char gst_pipe[128], path[128];
@@ -34,11 +34,14 @@ int init_screen(struct screen *screen) {
       struct cam_consumer *consumer = (struct cam_consumer*)malloc(sizeof(struct cam_consumer));
       consumer->screen = screen;
       consumer->position = i;
-      l1_insert(&screen->cams[i]->cam_consumers_list, consumer);
+      l1_insert(&screen->cams[i]->cam_consumers_list, &screen->cams[i]->consumers_lock, consumer);
     }
   } else {
-    if(open_video_file(screen) < 0)
+    if(open_video_file(screen) < 0) {
+      fprintf(stderr, "open_video_file failed\n");
+      ports -= 1 << port;
       return -1;
+    }
   }
 
   sprintf(gst_pipe, "( filesrc location=/tmp/stream_%d.sdp ! sdpdemux name=dynpay0 )", screen->rtp_port);
@@ -72,7 +75,7 @@ static void create_sdp(struct screen *screen) {
   fclose(f);
 }
 
-static void init_rtp_stream(struct screen *screen, AVCodecContext *codec) {
+static int init_rtp_stream(struct screen *screen, AVCodecContext *codec) {
   AVFormatContext *rtp_context;
   AVOutputFormat *rtp_fmt;
   AVStream *rtp_stream;
@@ -80,23 +83,34 @@ static void init_rtp_stream(struct screen *screen, AVCodecContext *codec) {
 
   rtp_context = avformat_alloc_context();
   rtp_fmt = av_guess_format("rtp", NULL, NULL);
-  if(rtp_fmt == NULL)
-    av_crit("av_guess_format", 0);
+  if(rtp_fmt == NULL) {
+    av_err_msg("av_guess_format", 0);
+    return -1;
+  }
   rtp_context->oformat = rtp_fmt;
   sprintf(rtp_context->filename, "rtp://127.0.0.1:%d", screen->rtp_port);
 
-  if((ret = avio_open(&(rtp_context->pb), rtp_context->filename, AVIO_FLAG_WRITE)) < 0)
-    av_crit("avio_open", ret);
+  if((ret = avio_open(&(rtp_context->pb), rtp_context->filename, AVIO_FLAG_WRITE)) < 0) {
+    av_err_msg("avio_open", ret);
+    return -1;
+  }
   rtp_stream = avformat_new_stream(rtp_context, (AVCodec *)codec->codec);
-  if(rtp_stream == NULL)
-    av_crit("avformat_new_stream", 0);
-  if((ret = avcodec_copy_context(rtp_stream->codec, (const AVCodecContext *)codec)) < 0)
-    av_crit("avcodec_copy_context", ret);
-  if((ret = avformat_write_header(rtp_context, NULL)) < 0)
-    av_crit("avformat_write_header", ret);
+  if(rtp_stream == NULL) {
+    av_err_msg("avformat_new_stream", 0);
+    return -1;
+  }
+  if((ret = avcodec_copy_context(rtp_stream->codec, (const AVCodecContext *)codec)) < 0) {
+    av_err_msg("avcodec_copy_context", ret);
+    return -1;
+  }
+  if((ret = avformat_write_header(rtp_context, NULL)) < 0) {
+    av_err_msg("avformat_write_header", ret);
+    return -1;
+  }
 
   screen->rtp_context = rtp_context;
   screen->rtp_stream = rtp_stream;
+  return 0;
 }
 
 
@@ -124,14 +138,14 @@ static void init_multiple_camera_screen(struct screen *screen) {
   codec = avcodec_find_encoder(CODEC_ID_H264);
 
   if(rtp_fmt == NULL)
-    av_crit("av_guess_format", 0);
+    av_err_msg("av_guess_format", 0);
   rtp_context->oformat = rtp_fmt;
   sprintf(rtp_context->filename, "rtp://127.0.0.1:%d", screen->rtp_port);
   if((ret = avio_open(&(rtp_context->pb), rtp_context->filename, AVIO_FLAG_WRITE)) < 0)
-    av_crit("avio_open", ret);
+    av_err_msg("avio_open", ret);
   rtp_stream = avformat_new_stream(rtp_context, codec);
   if(rtp_stream == NULL)
-    av_crit("avformat_new_stream", 0);
+    av_err_msg("avformat_new_stream", 0);
 
   c = rtp_stream->codec;
   avcodec_get_context_defaults3(c, codec);
@@ -148,7 +162,7 @@ static void init_multiple_camera_screen(struct screen *screen) {
   avcodec_open2(c, codec, NULL);
 
   if((ret = avformat_write_header(rtp_context, NULL)) < 0)
-    av_crit("avformat_write_header", ret);
+    av_err_msg("avformat_write_header", ret);
 
   create_frame();
 
@@ -159,37 +173,34 @@ static void init_multiple_camera_screen(struct screen *screen) {
 }
 
 static int open_video_file(struct screen *screen) {
-  int ret;
+  int ext;
   struct camera *cam = screen->cams[0];
   AVFormatContext *s = avformat_alloc_context();
+  AVStream *input_stream;
 
-  if(db_find_video_file(cam->id, s->filename, &screen->timestamp) < 0) {
+  if((ext = db_find_video_file(cam->id, s->filename, &screen->timestamp)) < 0) {
+    fprintf(stderr, "db_find_video_file File not found\n");
     avformat_free_context(s);
     return -1;
   }
   
-  if((ret = avformat_open_input(&s, s->filename, NULL, NULL)) < 0)
-    av_crit("avformat_open_input", ret);
-  if((ret = avformat_find_stream_info(s, NULL)) < 0)
-    av_crit("avformat_find_stream_info", ret);
-  int video_stream_index = av_find_best_stream(s, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
-  if(video_stream_index < 0)
-    av_crit("av_find_best_stream", video_stream_index);
+  if(ext == H264_FILE) {
+    input_stream = init_h264_read_ctx(s, cam);
+    h264_seek_file(s, input_stream, screen->timestamp);
+  } else {
+    int video_stream_index = open_input(s, NULL);
+    input_stream = s->streams[video_stream_index];
+    av_seek_frame(s, -1, screen->timestamp, AVSEEK_FLAG_ANY);
+  }
 
-  AVStream *input_stream = s->streams[video_stream_index];
-  AVCodecContext *codec = input_stream->codec;
-  input_stream->time_base = codec->time_base = AV_TIME_BASE_Q;
-  input_stream->r_frame_rate = cam->input_stream->r_frame_rate;
-
-  // TODO: here must be seek
-
-  init_rtp_stream(screen, codec);
+  init_rtp_stream(screen, input_stream->codec);
 
   struct in_out_cpy *io = (struct in_out_cpy*)malloc(sizeof(struct in_out_cpy));
   io->in_ctx = s;
   io->out_ctx = screen->rtp_context;
   io->in_stream = input_stream;
   io->out_stream = screen->rtp_stream;
+  io->rate_emu = 1;
   io->active = 1;
 
   pthread_t copy_input_to_output_thread;
@@ -222,8 +233,7 @@ void *start_rtsp_server(void* ptr) {
 
   gst_rtsp_server_attach(server, NULL);
   g_timeout_add_seconds(3, (GSourceFunc)timeout, server);
-  printf("RSTP server starting\n");
+  fprintf(stderr, "Starting gst-rtsp-server\n");
   g_main_loop_run(loop);
-  printf("RSTP server stopped\n");
   return NULL;
 }

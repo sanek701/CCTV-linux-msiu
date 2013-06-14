@@ -141,7 +141,9 @@ static void parse_command(char *buf, int client_fd, int *close_conn) {
       (unsigned long long)statvfs_buf.f_bsize * statvfs_buf.f_blocks, n_cameras);
     snd(client_fd, buf, close_conn);
   } else if(type == CAM_INFO) {
-    sprintf(buf, "{ \"error\": \"not implemented\" }\n");
+    struct camera *cam = get_cams_by_ids(cam_ids, ncams)[0];
+    sprintf(buf, "{ \"width\": %d, \"height\": %d, \"fps_den\": %d, \"fps_num\": %d }\n",
+      cam->codec->width, cam->codec->height, cam->input_stream->r_frame_rate.den, cam->input_stream->r_frame_rate.num);
     snd(client_fd, buf, close_conn);
   }
 }

@@ -1,4 +1,5 @@
 #include "cameras.h"
+#include <strings.h>
 #include <libpq-fe.h>
 #include <libconfig.h>
 
@@ -105,6 +106,11 @@ struct camera* db_select_cameras(int *ncams) {
     cameras[i].active = 1;
     cameras[i].cam_consumers_list = NULL;
 
+    if(pthread_mutex_init(&cameras[i].consumers_lock, NULL) < 0) {
+      fprintf(stderr, "pthread_mutex_init failed\n");
+      exit(EXIT_FAILURE);
+    }
+
     print_camera(&cameras[i]);
   }
   PQclear(result);
@@ -167,6 +173,15 @@ void db_update_videofile(struct camera *cam) {
   PQclear(result);
 }
 
+static char *_mp4 = "mp4";
+static char *_h264 = "h264";
+static char* get_extension(int ext) {
+  if(ext == MP4_FILE)
+    return _mp4;
+  else
+    return _h264;
+}
+
 int db_find_video_file(int cam_id, char *fname, time_t *timestamp) {
   char query[256], date_part[32];
   time_t start_ts;
@@ -189,7 +204,7 @@ int db_find_video_file(int cam_id, char *fname, time_t *timestamp) {
   char *cam_code = PQgetvalue(result1, 0, 0);
 
   snprintf(query, sizeof(query),
-    "SELECT id, date_part('epoch', started_at) FROM videofiles WHERE camera_id = %d AND started_at <= to_timestamp(%ld) at time zone 'UTC' AND (finished_at >= to_timestamp(%ld) at time zone 'UTC' OR finished_at IS NULL);",
+    "SELECT id, date_part('epoch', started_at), mp4 FROM videofiles WHERE camera_id = %d AND started_at <= to_timestamp(%ld) at time zone 'UTC' AND (finished_at >= to_timestamp(%ld) at time zone 'UTC' OR finished_at IS NULL);",
     cam_id, *timestamp, *timestamp);
 
   PGresult *result2 = exec_query(query);
@@ -202,17 +217,21 @@ int db_find_video_file(int cam_id, char *fname, time_t *timestamp) {
   if(found == 1) {
     char *id = PQgetvalue(result2, 0, 0);
     char *ts = PQgetvalue(result2, 0, 1);
+    int extension = H264_FILE;
 
     sscanf(id, "%d", &videofile_id);
     sscanf(ts, "%ld", &start_ts);
 
+    if(strcasecmp(PQgetvalue(result2, 0, 2), "true") == 0)
+      extension = MP4_FILE;
+
     *timestamp -= start_ts;
 
     strftime(date_part, sizeof(date_part), "%Y%m%d/%Y%m%d%H%M%S", localtime(&start_ts));
-    snprintf(fname, 1024, "%s/%s/%s.h264", store_dir, cam_code, date_part);
+    snprintf(fname, 1024, "%s/%s/%s.%s", store_dir, cam_code, date_part, get_extension(extension));
 
     fprintf(stderr, "Found file: %s at %d\n", fname, (int)*timestamp);
-    ret = 0;
+    ret = extension;
   } else {
     fprintf(stderr, "Files found: %d\n", found);
     ret = -1;
@@ -221,4 +240,15 @@ int db_find_video_file(int cam_id, char *fname, time_t *timestamp) {
   PQclear(result1);
   PQclear(result2);
   return ret;
+}
+
+void db_update_mp4_file_flag(int file_id) {
+  char query[256];
+  snprintf(query, sizeof(query), "UPDATE videofiles SET mp4 = true WHERE id = %d;", file_id);
+  PGresult *result = exec_query(query);
+  if(PQresultStatus(result) != PGRES_COMMAND_OK) {
+    fprintf(stderr, "Update failed(videofile): %s\n", PQresultErrorMessage(result));
+    exit(EXIT_FAILURE);
+  }
+  PQclear(result);
 }
