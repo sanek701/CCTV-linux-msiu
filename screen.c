@@ -1,8 +1,13 @@
 #include "cameras.h"
 #include "file_reader.h"
 
+#define PORT_RANGE_START 4000
+
 GstRTSPServer *server;
 unsigned int ports = 0;
+
+l1 *screens = NULL;
+pthread_mutex_t screens_lock;
 
 static int open_video_file(struct screen *screen);
 static void init_single_camera_screen(struct screen *screen);
@@ -20,7 +25,7 @@ int init_screen(struct screen *screen) {
     }
   }
 
-  screen->rtp_port = 4000 + port;
+  screen->rtp_port = PORT_RANGE_START + port;
 
   printf("rtp_port: %d\n", screen->rtp_port);
 
@@ -53,7 +58,46 @@ int init_screen(struct screen *screen) {
   gst_rtsp_media_mapping_add_factory(mapping, path, factory);
   gst_rtsp_media_factory_set_shared(factory, TRUE);
   g_object_unref(mapping);
+
+  l1_insert(&screens, &screens_lock, screen);
+
   return 0;
+}
+
+int remove_screen_counsumers(void *value, void *arg) {
+  struct cam_consumer *consumer = (struct cam_consumer *)value;
+  struct screen *screen = (struct screen *)arg;
+
+  if(consumer->screen == screen) {
+    free(consumer);
+    return 0;
+  } else {
+    return 1;
+  }
+}
+
+void destroy_screen(struct screen *screen) {
+  char path[128];
+  if(screen->type == REAL) {
+    for(int i=0; i < screen->ncams; i++) {
+      l1_filter(&screen->cams[i]->cam_consumers_list, &screen->cams[i]->consumers_lock, &remove_screen_counsumers, screen);
+    }
+  } else {
+    screen->io->active = 0;
+  }
+
+  printf("consumers clear\n");
+
+  int port = screen->rtp_port - PORT_RANGE_START;
+  ports -= 1 << port;
+
+  sprintf(path, "/stream_%d", screen->session_id);
+  GstRTSPMediaMapping *mapping = gst_rtsp_server_get_media_mapping(server);
+  gst_rtsp_media_mapping_remove_factory(mapping, path);
+  g_object_unref(mapping);
+
+  free(screen->cams);
+  free(screen);
 }
 
 static void create_frame() {
@@ -112,7 +156,6 @@ static int init_rtp_stream(struct screen *screen, AVCodecContext *codec) {
   screen->rtp_stream = rtp_stream;
   return 0;
 }
-
 
 static void init_single_camera_screen(struct screen *screen) {
   struct camera *cam = screen->cams[0];
@@ -217,11 +260,24 @@ static int open_video_file(struct screen *screen) {
   return 0;
 }
 
+int filter_timeout_screen(void *value, void *arg) {
+  struct screen *screen = (struct screen *)value;
+  if(time(NULL) - screen->last_activity > 10) {
+    printf("Killing session_id: %d\n", screen->session_id);
+    destroy_screen(screen);
+    return 0;
+  } else {
+    return 1;
+  }
+}
+
 static gboolean timeout(GstRTSPServer *server, gboolean ignored) {
   GstRTSPSessionPool *pool;
   pool = gst_rtsp_server_get_session_pool(server);
   gst_rtsp_session_pool_cleanup(pool);
   g_object_unref(pool);
+
+  l1_filter(&screens, &screens_lock, &filter_timeout_screen, NULL);
   return TRUE;
 }
 

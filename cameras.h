@@ -10,6 +10,7 @@
 #define REAL 2
 #define STATS 3
 #define CAM_INFO 4
+#define SCREEN_PING 5
 
 #define MP4_FILE 100
 #define H264_FILE 101
@@ -68,13 +69,13 @@ struct screen {
     uint8_t **frames;
     int left_frames;
     pthread_mutex_t counter_lock;
-    GstRTSPMediaFactory *factory;
     AVFormatContext *rtp_context;
     AVStream *rtp_stream;
     int rtp_port;
     int width;
     int height;
     struct in_out_cpy *io;
+    time_t last_activity;
 };
 
 struct cam_consumer {
@@ -86,6 +87,7 @@ void  error(const char *msg);
 void  av_err_msg(char *msg, int errnum);
 void* recorder_thread(void *ptr);
 int   init_screen(struct screen *screen);
+void  destroy_screen(struct screen *screen);
 void* start_rtsp_server(void* ptr);
 void* start_h264_to_mp4_service(void *ptr);
 AVStream* init_h264_read_ctx(AVFormatContext *s, struct camera *cam);

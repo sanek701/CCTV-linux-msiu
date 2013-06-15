@@ -1,4 +1,8 @@
 class CamerasController < InheritedResources::Base
+  def show
+    @cam_info = VIDEO_SERVER.cam_info(resource.id)
+  end
+
   def watch_archive
 
   end

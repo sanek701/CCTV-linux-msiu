@@ -279,6 +279,7 @@ void *recorder_thread(void *ptr) {
       if((ret = av_write_frame(cam->output_context, &packet)) < 0)
         av_err_msg("av_write_frame", ret);
 
+      pthread_mutex_lock(&cam->consumers_lock);
       for(l1 *p = cam->cam_consumers_list; p != NULL; p = p->next) {
         struct cam_consumer *consumer = (struct cam_consumer *)p->value;
         if(consumer->screen->ncams == 1) {
@@ -287,10 +288,11 @@ void *recorder_thread(void *ptr) {
             av_err_msg("av_write_frame", ret);
         } else {
           // decode frame
-          // rescame image
+          // rescale image
           // copy to output image
         }
       }
+      pthread_mutex_unlock(&cam->consumers_lock);
     }
     av_free_packet(&packet);
     av_init_packet(&packet);

@@ -27,5 +27,20 @@
   %br
   = @camera.motion_delay
 
+- if @cam_info
+  %p
+    %strong Разрешение
+    %br
+    #{@cam_info['width']}x#{@cam_info['height']}
+  %p
+    %strong Частота кадров
+    %br
+    = sprintf("%g", @cam_info['fps_num'].to_f / @cam_info['fps_den'])
+  %p
+    %strong Кодек
+    %br
+    = @cam_info['codec']
+
+
 .form-actions
   = link_to 'Назад', cameras_path, class: 'btn'

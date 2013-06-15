@@ -11,6 +11,8 @@ int should_terminate = 0;
 char *store_dir;
 
 extern int terminate_h264_to_mp4_service;
+extern pthread_mutex_t screens_lock;
+extern l1 *screens;
 
 void terminate(int signal) {
   fprintf(stderr, "Terminating...\n");
@@ -66,16 +68,28 @@ int main(int argc, char** argv) {
 
   fprintf(stderr, "All cameras started\n");
 
+  if(pthread_mutex_init(&screens_lock, NULL) < 0) {
+    fprintf(stderr, "pthread_mutex_init failed\n");
+    exit(EXIT_FAILURE);
+  }
+
   pthread_t rtsp_server_thread;
   if(pthread_create(&rtsp_server_thread, NULL, start_rtsp_server, NULL) < 0)
     error("pthread_create");
-
+  if(pthread_detach(rtsp_server_thread) < 0)
+    error("pthread_detach");
 
   pthread_t h264_to_mp4_thread;
   if(pthread_create(&h264_to_mp4_thread, NULL, start_h264_to_mp4_service, NULL) < 0)
     error("pthread_create");
 
   control_socket_loop();
+
+  struct screen *screen;
+  while((screen = (struct screen *)l1_shift(&screens, &screens_lock)) != NULL) {
+    destroy_screen(screen);
+  }
+  pthread_mutex_destroy(&screens_lock);
 
   for(int i=0; i < n_cameras; i++) {
     pthread_join(threads[i], NULL);
@@ -85,8 +99,6 @@ int main(int argc, char** argv) {
   }
 
   terminate_h264_to_mp4_service = 1;
-  //pthread_join(rtsp_server_thread, NULL);
-  //printf("rtsp_server_thread shutted down\n");
   pthread_join(h264_to_mp4_thread, NULL);
   printf("h264_to_mp4_thread shutted down\n");
 
