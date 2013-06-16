@@ -1,6 +1,10 @@
 - model_class = Camera
 .page-header
-  %h1=t '.title', :default => model_class.model_name.human
+  %h1 Камера ##{@camera.id}
+
+.pull-right
+  = image_tag "/storage/#{@camera.code}/screenshot.png?#{Time.now.to_i}", width: 400
+  %br.clearfloat
 
 %p
   %strong= model_class.human_attribute_name(:code) + ':'
