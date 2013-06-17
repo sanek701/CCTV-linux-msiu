@@ -9,11 +9,11 @@ unsigned int ports = 0;
 l1 *screens = NULL;
 pthread_mutex_t screens_lock;
 
-static int open_video_file(struct screen *screen);
+int screen_open_video_file(struct screen *screen);
 static void init_single_camera_screen(struct screen *screen);
 static void init_multiple_camera_screen(struct screen *screen);
 
-int init_screen(struct screen *screen) {
+int screen_init(struct screen *screen) {
   char gst_pipe[128], path[128];
   int port;
   unsigned int i;
@@ -42,7 +42,7 @@ int init_screen(struct screen *screen) {
       l1_insert(&screen->cams[i]->cam_consumers_list, &screen->cams[i]->consumers_lock, consumer);
     }
   } else {
-    if(open_video_file(screen) < 0) {
+    if(screen_open_video_file(screen) < 0) {
       fprintf(stderr, "open_video_file failed\n");
       ports -= 1 << port;
       return -1;
@@ -76,7 +76,7 @@ int remove_screen_counsumers(void *value, void *arg) {
   }
 }
 
-void destroy_screen(struct screen *screen) {
+void screen_destroy(struct screen *screen) {
   char path[128];
   if(screen->type == REAL) {
     for(int i=0; i < screen->ncams; i++) {
@@ -215,7 +215,7 @@ static void init_multiple_camera_screen(struct screen *screen) {
   create_sdp(screen);
 }
 
-static int open_video_file(struct screen *screen) {
+int screen_open_video_file(struct screen *screen) {
   int ext;
   struct camera *cam = screen->cams[0];
   AVFormatContext *s = avformat_alloc_context();
@@ -236,7 +236,8 @@ static int open_video_file(struct screen *screen) {
     av_seek_frame(s, -1, screen->timestamp, AVSEEK_FLAG_ANY);
   }
 
-  init_rtp_stream(screen, input_stream->codec);
+  if(screen->rtp_context == NULL)
+    init_rtp_stream(screen, input_stream->codec);
 
   struct in_out_cpy *io = (struct in_out_cpy*)malloc(sizeof(struct in_out_cpy));
   io->in_ctx = s;
@@ -264,7 +265,7 @@ int filter_timeout_screen(void *value, void *arg) {
   struct screen *screen = (struct screen *)value;
   if(time(NULL) - screen->last_activity > 10) {
     printf("Killing session_id: %d\n", screen->session_id);
-    destroy_screen(screen);
+    screen_destroy(screen);
     return 0;
   } else {
     return 1;
@@ -277,7 +278,7 @@ static gboolean timeout(GstRTSPServer *server, gboolean ignored) {
   gst_rtsp_session_pool_cleanup(pool);
   g_object_unref(pool);
 
-  l1_filter(&screens, &screens_lock, &filter_timeout_screen, NULL);
+  //l1_filter(&screens, &screens_lock, &filter_timeout_screen, NULL);
   return TRUE;
 }
 

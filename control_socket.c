@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <sys/un.h>
 #include "cameras.h"
+#include "screen.h"
 #include "json.h"
 
 #define MAX_CLIENTS 10
@@ -137,10 +138,11 @@ static void parse_command(char *buf, int client_fd, int *close_conn) {
         screen->ncams = ncams;
         screen->session_id = ssid;
         screen->cams = get_cams_by_ids(cam_ids, ncams);
-        screen->timestamp = timestamp;
+        screen->timestamp = timestamp;\
+        screen->rtp_context = NULL;
         screen->last_activity = time(NULL);
 
-        if(init_screen(screen) < 0) {
+        if(screen_init(screen) < 0) {
           sprintf(buf, "{ \"error\": \"Screen initialization failed\" }\n");
         } else {
           sprintf(buf, "{ \"session_id\": %d, \"width\": %d, \"height\": %d }\n", screen->session_id, screen->width, screen->height);
@@ -150,7 +152,14 @@ static void parse_command(char *buf, int client_fd, int *close_conn) {
         if(screen == NULL) {
           sprintf(buf, "{ \"error\": \"Screen not found\" }\n");
         } else {
-
+          if(type != ARCHIVE || ncams != 1 || cam_ids == NULL || cam_ids[0] != screen->cams[0]->id) {
+            sprintf(buf, "{ \"error\": \"Bad request\" }\n");
+          } else {
+            screen->io->active = 0;
+            screen->timestamp = timestamp;
+            screen_open_video_file(screen);
+            sprintf(buf, "{ \"ok\": \"ok\" }\n");
+          }
         }
       }
       break;
@@ -186,6 +195,9 @@ static void parse_command(char *buf, int client_fd, int *close_conn) {
   }
 
   snd(client_fd, buf, close_conn);
+
+  if(cam_ids != NULL)
+    free(cam_ids);
 }
 
 void control_socket_init() {

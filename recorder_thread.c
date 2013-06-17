@@ -136,6 +136,7 @@ static void close_output(struct camera *cam) {
 
   if(ist != NULL && ost != NULL) {
     struct in_out_cpy* io = (struct in_out_cpy*)malloc(sizeof(struct in_out_cpy));
+    io->file_id = cam->file_id;
     io->in_ctx = rd;
     io->out_ctx = wr;
     io->in_stream = ist;

@@ -3,6 +3,7 @@
 #include <strings.h>
 #include <signal.h>
 #include "cameras.h"
+#include "screen.h"
 #include "control_socket.h"
 
 struct camera *cameras = NULL;
@@ -87,7 +88,7 @@ int main(int argc, char** argv) {
 
   struct screen *screen;
   while((screen = (struct screen *)l1_shift(&screens, &screens_lock)) != NULL) {
-    destroy_screen(screen);
+    screen_destroy(screen);
   }
   pthread_mutex_destroy(&screens_lock);
 

@@ -86,8 +86,5 @@ struct cam_consumer {
 void  error(const char *msg);
 void  av_err_msg(char *msg, int errnum);
 void* recorder_thread(void *ptr);
-int   init_screen(struct screen *screen);
-void  destroy_screen(struct screen *screen);
-void* start_rtsp_server(void* ptr);
 void* start_h264_to_mp4_service(void *ptr);
 AVStream* init_h264_read_ctx(AVFormatContext *s, struct camera *cam);
