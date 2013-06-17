@@ -229,6 +229,10 @@ int screen_open_video_file(struct screen *screen) {
   
   if(ext == H264_FILE) {
     input_stream = init_h264_read_ctx(s, cam);
+    if(input_stream == NULL) {
+      avformat_free_context(s);
+      return -1;
+    }
     h264_seek_file(s, input_stream, screen->timestamp);
   } else {
     int video_stream_index = open_input(s, NULL);

@@ -35,8 +35,10 @@ ActiveRecord::Schema.define(:version => 20130517115712) do
 
   create_table "videofiles", :force => true do |t|
     t.integer  "camera_id"
+    t.boolean  "mp4"
     t.datetime "started_at"
     t.datetime "finished_at"
+    t.datetime "deleted_at"
   end
 
   add_index "videofiles", ["camera_id"], :name => "index_videofiles_on_camera_id"

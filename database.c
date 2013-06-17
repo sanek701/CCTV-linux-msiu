@@ -204,7 +204,7 @@ int db_find_video_file(int cam_id, char *fname, time_t *timestamp) {
   char *cam_code = PQgetvalue(result1, 0, 0);
 
   snprintf(query, sizeof(query),
-    "SELECT id, date_part('epoch', started_at), mp4 FROM videofiles WHERE camera_id = %d AND started_at <= to_timestamp(%ld) at time zone 'UTC' AND (finished_at >= to_timestamp(%ld) at time zone 'UTC' OR finished_at IS NULL);",
+    "SELECT id, date_part('epoch', started_at at time zone 'UTC'), mp4 FROM videofiles WHERE camera_id = %d AND started_at <= to_timestamp(%ld) at time zone 'UTC' AND (finished_at >= to_timestamp(%ld) at time zone 'UTC' OR finished_at IS NULL);",
     cam_id, *timestamp, *timestamp);
 
   PGresult *result2 = exec_query(query);
