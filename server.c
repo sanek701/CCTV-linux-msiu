@@ -101,7 +101,7 @@ int main(int argc, char** argv) {
 
   terminate_h264_to_mp4_service = 1;
   pthread_join(h264_to_mp4_thread, NULL);
-  printf("h264_to_mp4_thread shutted down\n");
+  fprintf(stderr, "h264_to_mp4_thread shutted down\n");
 
   free(cameras);
   free(threads);

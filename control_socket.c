@@ -33,10 +33,18 @@ static time_t last_disk_space_check = 0;
 
 static void check_disk_space() {
   struct statvfs statvfs_buf;
+  unsigned long long avail;
   if(statvfs(store_dir, &statvfs_buf) < 0) {
     perror("statvfs");
+    return;
   }
-  printf("Free space on device: %llu\n", (unsigned long long)statvfs_buf.f_bsize * statvfs_buf.f_bavail);
+  
+  while((avail = (unsigned long long)statvfs_buf.f_bsize * statvfs_buf.f_bavail) < (unsigned long long)1024 * 1024 * 1024) {
+    if(!db_unlink_oldest_file()) {
+      fprintf(stderr, "Few disk space left, but nothing to delete.\n");
+      break;
+    }
+  }
 }
 
 static struct camera** get_cams_by_ids(int *cam_ids, int ncams) {
@@ -141,6 +149,7 @@ static void parse_command(char *buf, int client_fd, int *close_conn) {
         screen->timestamp = timestamp;\
         screen->rtp_context = NULL;
         screen->last_activity = time(NULL);
+        screen->io = NULL;
 
         if(screen_init(screen) < 0) {
           sprintf(buf, "{ \"error\": \"Screen initialization failed\" }\n");
@@ -155,10 +164,9 @@ static void parse_command(char *buf, int client_fd, int *close_conn) {
           if(type != ARCHIVE || ncams != 1 || cam_ids == NULL || cam_ids[0] != screen->cams[0]->id) {
             sprintf(buf, "{ \"error\": \"Bad request\" }\n");
           } else {
-            screen->io->active = 0;
             screen->timestamp = timestamp;
             screen_open_video_file(screen);
-            sprintf(buf, "{ \"ok\": \"ok\" }\n");
+            sprintf(buf, "{ \"session_id\": %d, \"width\": %d, \"height\": %d }\n", screen->session_id, screen->width, screen->height);
           }
         }
       }

@@ -96,11 +96,12 @@ jQuery ->
       dataType: 'json',
       data: { date: that.data('date'), position: that.data('position'), session_id: $session_id },
       success: (data)->
-        if data.rtsp
+        if data.session_id == $session_id
+          return
+        else
+          $session_id = data.session_id
           id = $vlc.playlist.add(data.rtsp, "");
-          $vlc.playlist.playItem(id);
-        if data.session_id
-          $session_id = data.session_id;
+          $vlc.playlist.playItem(id)
     }
 
   $('#zoom-in').on 'mousedown', ->

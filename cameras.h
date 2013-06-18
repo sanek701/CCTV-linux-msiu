@@ -55,9 +55,14 @@ struct in_out_cpy {
   AVFormatContext *out_ctx;
   AVStream *in_stream;
   AVStream *out_stream;
+  int close_output;
   int active;
   int rate_emu;
   int file_id;
+  int frame;
+  int64_t start_time;
+  struct in_out_cpy *prev_io;
+  pthread_mutex_t io_lock;
 };
 
 struct screen {

@@ -75,16 +75,19 @@ int h264_seek_file(AVFormatContext *s, AVStream *ist, int timestampt) {
 }
 
 void* copy_input_to_output(void *ptr) {
-  int ret;
+  int ret, got_key_frame = 0;
   struct in_out_cpy *io = (struct in_out_cpy *)ptr;
   AVPacket packet;
 
-  int frame = 0;
-  int64_t start = av_gettime();
-  int64_t pts = 0, now;
+  io->frame = 0;
+  io->start_time = av_gettime();
+  int64_t pts, now;
 
   AVRational frame_rate = io->in_stream->r_frame_rate;
   AVRational time_base = av_inv_q(frame_rate);
+
+  if(!io->rate_emu)
+    got_key_frame = 1;
 
   av_init_packet(&packet);
   while(1) {
@@ -97,10 +100,26 @@ void* copy_input_to_output(void *ptr) {
       break;
     }
 
+    if(!got_key_frame && !(packet.flags & AV_PKT_FLAG_KEY)) {
+      continue;
+    }
+    got_key_frame = 1;
+
+    if(io->prev_io != NULL) {
+      pthread_mutex_init(&io->prev_io->io_lock, NULL);
+      pthread_mutex_lock(&io->prev_io->io_lock);
+      io->start_time = io->prev_io->start_time;
+      io->frame = io->prev_io->frame + 1;
+      io->prev_io->close_output = 0;
+      io->prev_io->active = 0;
+      pthread_mutex_lock(&io->prev_io->io_lock); // wait until prev io finishes
+      io->prev_io = NULL;
+    }
+
     if(io->rate_emu)
       packet.dts = av_rescale_q(av_gettime(), AV_TIME_BASE_Q, io->out_stream->time_base);
     else
-      packet.dts = av_rescale_q(frame, time_base, io->out_stream->time_base);
+      packet.dts = av_rescale_q(io->frame, time_base, io->out_stream->time_base);
 
     packet.stream_index = io->out_stream->id;
 
@@ -109,27 +128,35 @@ void* copy_input_to_output(void *ptr) {
       break;
     }
 
+    // TODO: '[rtp @ 0x979dd90] pts (450000) < dts (123436231555728) in stream 0' when playing mp4
+
     av_free_packet(&packet);
     av_init_packet(&packet);
 
     if(!io->active)
       break;
 
-    frame += 1;
-    pts = frame * frame_rate.den * AV_TIME_BASE / frame_rate.num;
-    now = av_gettime() - start;
+    io->frame += 1;
+    pts = io->frame * frame_rate.den * AV_TIME_BASE / frame_rate.num;
+    now = av_gettime() - io->start_time;
 
     if(io->rate_emu && pts > now) {
       av_usleep(pts - now);
     }
   }
 
-  if((ret = av_write_trailer(io->out_ctx)) < 0)
-    av_err_msg("av_write_trailer", ret);
-
-  avio_close(io->out_ctx->pb);
   avformat_close_input(&io->in_ctx);
-  avformat_free_context(io->out_ctx);
+
+  if(io->close_output) {
+    if((ret = av_write_trailer(io->out_ctx)) < 0)
+      av_err_msg("av_write_trailer", ret);
+    avio_close(io->out_ctx->pb);
+    avformat_free_context(io->out_ctx);
+  } else {
+    pthread_mutex_unlock(&io->io_lock); // release next io
+    pthread_mutex_destroy(&io->io_lock);
+  }
+
   free(io);
 
   return NULL;

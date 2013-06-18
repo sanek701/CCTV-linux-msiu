@@ -1,4 +1,5 @@
 #include "cameras.h"
+#include <unistd.h>
 #include <strings.h>
 #include <libpq-fe.h>
 #include <libconfig.h>
@@ -182,64 +183,81 @@ static char* get_extension(int ext) {
     return _h264;
 }
 
-int db_find_video_file(int cam_id, char *fname, time_t *timestamp) {
-  char query[256], date_part[32];
-  time_t start_ts;
-  int videofile_id;
-  int found = 0, ret = 0;
-
+static char* get_cam_code(int cam_id) {
+  char query[256], *cam_code, *ret;
   snprintf(query, sizeof(query), "SELECT code FROM cameras where id = %d;", cam_id);
-  PGresult *result1 = exec_query(query);
-  if(PQresultStatus(result1) != PGRES_TUPLES_OK) {
-    fprintf(stderr, "Selection failed(cameras): %s\n", PQresultErrorMessage(result1));
-    exit(EXIT_FAILURE);
+  PGresult *result = exec_query(query);
+  if(PQresultStatus(result) != PGRES_TUPLES_OK) {
+    fprintf(stderr, "Selection failed(cameras): %s\n", PQresultErrorMessage(result));
+    return NULL;
   }
-
-  if(PQntuples(result1) != 1) {
-    PQclear(result1);
+  if(PQntuples(result) == 1) {
+    cam_code = PQgetvalue(result, 0, 0);
+    ret = (char *)malloc(strlen(cam_code) + 1);
+    strcpy(ret, cam_code);
+    PQclear(result);
+    return ret;
+  } else {
+    PQclear(result);
     fprintf(stderr, "No camera found\n");
-    return -1;
+    return NULL;
   }
+}
 
-  char *cam_code = PQgetvalue(result1, 0, 0);
+static int mk_file_name(int cam_id, time_t *start_ts, char *mp4, char *fname) {
+  char date_part[32];
+  int extension = H264_FILE;
+  char *cam_code = get_cam_code(cam_id);
+  if(cam_code == NULL)
+    return -1;
+
+  if(strcmp(mp4, "t") == 0)
+    extension = MP4_FILE;
+  strftime(date_part, sizeof(date_part), "%Y%m%d/%Y%m%d%H%M%S", localtime(start_ts));
+  snprintf(fname, 1024, "%s/%s/%s.%s", store_dir, cam_code, date_part, get_extension(extension));
+  free(cam_code);
+  return extension;
+}
+
+int db_find_video_file(int cam_id, char *fname, time_t *timestamp) {
+  char query[256];
+  time_t start_ts;
+  int found, extension;
 
   snprintf(query, sizeof(query),
-    "SELECT id, date_part('epoch', started_at at time zone 'UTC'), mp4 FROM videofiles WHERE camera_id = %d AND started_at <= to_timestamp(%ld) at time zone 'UTC' AND (finished_at >= to_timestamp(%ld) at time zone 'UTC' OR finished_at IS NULL);",
+    "SELECT date_part('epoch', started_at at time zone 'UTC'), mp4 FROM videofiles WHERE camera_id = %d AND started_at <= to_timestamp(%ld) at time zone 'UTC' AND (finished_at >= to_timestamp(%ld) at time zone 'UTC' OR finished_at IS NULL);",
     cam_id, *timestamp, *timestamp);
 
-  PGresult *result2 = exec_query(query);
-  if(PQresultStatus(result2) != PGRES_TUPLES_OK) {
-    fprintf(stderr, "Selection failed(videofile): %s\n", PQresultErrorMessage(result2));
+  PGresult *result = exec_query(query);
+  if(PQresultStatus(result) != PGRES_TUPLES_OK) {
+    fprintf(stderr, "Selection failed(videofile): %s\n", PQresultErrorMessage(result));
     exit(EXIT_FAILURE);
   }
 
-  found = PQntuples(result2);
+  found = PQntuples(result);
   if(found == 1) {
-    char *id = PQgetvalue(result2, 0, 0);
-    char *ts = PQgetvalue(result2, 0, 1);
-    int extension = H264_FILE;
-
-    sscanf(id, "%d", &videofile_id);
+    char *ts  = PQgetvalue(result, 0, 0);
+    char *mp4 = PQgetvalue(result, 0, 1);
+    
     sscanf(ts, "%ld", &start_ts);
-
-    if(strcasecmp(PQgetvalue(result2, 0, 2), "true") == 0)
-      extension = MP4_FILE;
 
     *timestamp -= start_ts;
 
-    strftime(date_part, sizeof(date_part), "%Y%m%d/%Y%m%d%H%M%S", localtime(&start_ts));
-    snprintf(fname, 1024, "%s/%s/%s.%s", store_dir, cam_code, date_part, get_extension(extension));
+    extension = mk_file_name(cam_id, &start_ts, mp4, fname);
+    if(extension < 0) {
+      PQclear(result);
+      return -1;
+    }
 
     fprintf(stderr, "Found file: %s at %d\n", fname, (int)*timestamp);
-    ret = extension;
   } else {
+    extension = -1;
     fprintf(stderr, "Files found: %d\n", found);
-    ret = -1;
   }
 
-  PQclear(result1);
-  PQclear(result2);
-  return ret;
+  PQclear(result);
+
+  return extension;
 }
 
 void db_update_mp4_file_flag(int file_id) {
@@ -251,4 +269,41 @@ void db_update_mp4_file_flag(int file_id) {
     exit(EXIT_FAILURE);
   }
   PQclear(result);
+}
+
+int db_unlink_oldest_file() {
+  int video_id, camera_id;
+  time_t start_ts;
+  char query[256], fname[1024];
+
+  strcpy(query, "SELECT id, camera_id, date_part('epoch', started_at at time zone 'UTC'), mp4 FROM videofiles ORDER BY started_at DESC LIMIT 1");
+  PGresult *result = exec_query(query);
+  if(PQntuples(result) == 1) {
+    char *id     = PQgetvalue(result, 0, 0);
+    char *cam_id = PQgetvalue(result, 0, 1);
+    char *ts     = PQgetvalue(result, 0, 2);
+    char *mp4    = PQgetvalue(result, 0, 3);
+
+    sscanf(id,     "%d", &video_id);
+    sscanf(cam_id, "%d", &camera_id);
+    sscanf(ts,    "%ld", &start_ts);
+
+    if(mk_file_name(camera_id, &start_ts, mp4, fname) < 0) {
+      PQclear(result);
+      return -1;
+    }
+
+    PQclear(result);
+
+    snprintf(query, sizeof(query), "UPDATE videofiles SET deleted_at = NOW() at time zone 'UTC' WHERE id = %d;", video_id);
+    PGresult *result = exec_query(query);
+    if(PQresultStatus(result) != PGRES_COMMAND_OK) {
+      fprintf(stderr, "Deleting: %s\n", fname);
+      unlink(fname);
+      return 1;
+    }
+  }
+
+  PQclear(result);
+  return 0;
 }

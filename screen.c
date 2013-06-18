@@ -216,7 +216,8 @@ static void init_multiple_camera_screen(struct screen *screen) {
 }
 
 int screen_open_video_file(struct screen *screen) {
-  int ext;
+  int ext, ret;
+  int video_stream_index;
   struct camera *cam = screen->cams[0];
   AVFormatContext *s = avformat_alloc_context();
   AVStream *input_stream;
@@ -226,7 +227,7 @@ int screen_open_video_file(struct screen *screen) {
     avformat_free_context(s);
     return -1;
   }
-  
+
   if(ext == H264_FILE) {
     input_stream = init_h264_read_ctx(s, cam);
     if(input_stream == NULL) {
@@ -235,9 +236,17 @@ int screen_open_video_file(struct screen *screen) {
     }
     h264_seek_file(s, input_stream, screen->timestamp);
   } else {
-    int video_stream_index = open_input(s, NULL);
+    if((video_stream_index = open_input(s, NULL)) < 0) {
+      fprintf(stderr, "open_input failed");
+      avformat_close_input(&s);
+      return -1;
+    }
     input_stream = s->streams[video_stream_index];
-    av_seek_frame(s, -1, screen->timestamp, AVSEEK_FLAG_ANY);
+    if((ret = av_seek_frame(s, -1, screen->timestamp, AVSEEK_FLAG_ANY)) < 0) {
+      av_err_msg("av_seek_frame", ret);
+      avformat_close_input(&s);
+      return -1;
+    }
   }
 
   if(screen->rtp_context == NULL)
@@ -248,6 +257,8 @@ int screen_open_video_file(struct screen *screen) {
   io->out_ctx = screen->rtp_context;
   io->in_stream = input_stream;
   io->out_stream = screen->rtp_stream;
+  io->prev_io = screen->io;
+  io->close_output = 1;
   io->rate_emu = 1;
   io->active = 1;
 
@@ -262,6 +273,7 @@ int screen_open_video_file(struct screen *screen) {
   screen->io = io;
 
   create_sdp(screen);
+
   return 0;
 }
 
@@ -279,8 +291,11 @@ int filter_timeout_screen(void *value, void *arg) {
 static gboolean timeout(GstRTSPServer *server, gboolean ignored) {
   GstRTSPSessionPool *pool;
   pool = gst_rtsp_server_get_session_pool(server);
-  gst_rtsp_session_pool_cleanup(pool);
+  int removed = gst_rtsp_session_pool_cleanup(pool);
   g_object_unref(pool);
+
+  if(removed > 0)
+    fprintf(stderr, "Removed %d sessions\n", removed);
 
   //l1_filter(&screens, &screens_lock, &filter_timeout_screen, NULL);
   return TRUE;

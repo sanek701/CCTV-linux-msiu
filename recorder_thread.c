@@ -141,8 +141,10 @@ static void close_output(struct camera *cam) {
     io->out_ctx = wr;
     io->in_stream = ist;
     io->out_stream = ost;
+    io->close_output = 1;
     io->rate_emu = 0;
     io->active = 1;
+    io->prev_io = NULL;
     l1_insert(&h264_to_mp4_tasks, &tasks_lock, io);
   } else {
     fprintf(stderr, "init_h264_read_ctx or init_mp4_output failed\n");
