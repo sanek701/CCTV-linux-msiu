@@ -4,25 +4,32 @@
 \usepackage{samgtubib}
 \usepackage{pdfpages}
 \usepackage{pdflscape}
-%\usepackage{natbib}
-%\usepackage{amsmath}
-%\usepackage{xcolor}
-%\usepackage{multirow}
 
 \numberwithin{equation}{chapter}
 \renewcommand{\theequation}{\arabic{chapter}.\arabic{equation}}
+\renewcommand{\baselinestretch}{1.5}
 
 \begin{document}
 
 \renewcommand{\contentsname}{{\Large{Оглавление}\hfill}}
 
-\title{Разработка универсальной системы видеонаблюдения ФГБОУ ВПО «МГИУ» с возможностью архивирования и просмотра ключевых событий}
-{Киселев Александр Александрович}
-{А.\+А.~Киселев}
-{доцент}
-{Д.\+С.~Бургонский}
-{2013}
+\includepdf[pages={1}]{title.pdf}
+\newpage
 
+\setcounter{page}{2}
+
+\vspace*{1cm}
+
+\section*{Аннотация}
+\begin{quote}
+\input{annotation}
+\end{quote}
+
+\tableofcontents*
+
+\newpage
+
+\large
 \input{intro}
 \input{sect1}
 \input{sect2}

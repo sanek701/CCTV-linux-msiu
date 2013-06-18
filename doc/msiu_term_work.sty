@@ -14,91 +14,6 @@
 \usepackage{hyperref}
 \usepackage{pgf}
 
-\long\def\title#1#2#3#4#5#6#7{
-\mainmatter
-\noindent
-\thispagestyle{empty}
-
-\vspace*{-\headheight}\vspace*{-\headsep}
-
-\begin{center}
-\textsc{ 
-министерство образования и науки российской федерации\\
-\textbf{\small{федеральное государственное бюджетное образовательное\\
-учреждение высшего профессионального образования\\
-<<Московский государственный индустриальный университет>>}\\
-(ФГБОУ ВПО <<МГИУ>>)}\\
-кафедра информационных систем и технологий\\
-}
-
-\vspace{3cm plus 1mm minus 1mm}
-
-
-{\LARGE\textbf{ВЫПУСКНАЯ КВАЛИФИКАЦИОННАЯ РАБОТА}}
-
-\vspace{1cm plus 1mm minus 1mm}
-
-{\large
-по специальности <<Математическое обеспечение и администрирование информационных систем>>
-
-\vspace{1cm plus 1mm minus 1mm}
-
-на тему <<#1>>\\
-
-\vfill
-\vspace{3cm plus 1mm minus 1mm}
-
-\begin{tabular}{l}
-Студент-дипломник\\
-\\
-Руководитель работы\\
-#4\\
-\end{tabular}
-\hfill
-\begin{tabular}{l}
-#3\\
-\\
-\\
-#5\\
-\end{tabular}
-
-\vspace{1cm plus 1mm minus 1mm}
-ДОПУСКАЕТСЯ К ЗАЩИТЕ
-
-\begin{tabular}{l}
-Зав. кафедрой 36\\
-к.ф.-м.н., доцент\\
-\\
-\end{tabular}
-\hfill
-\begin{tabular}{l}
-\\
-Е.А Роганов\\
-\\
-\end{tabular}
-\vspace{2cm plus 1mm minus 1mm}
-
-Москва #6
-}
-
-\newpage
-
-% Обратная сторона титульного листа
-\setcounter{page}{2}
-
-\vspace*{1cm}
-\section*{Аннотация}
-\begin{quote} 
-\input{annotation}
-\end{quote}
-
-\tableofcontents*
-
-\newpage
-
-\end{center}
-
-}
 
 \def\+{\hskip 0.15mm}
 
@@ -154,6 +69,7 @@
 %Пробел до и после подписи к рисунку
 \setlength{\abovecaptionskip}{2mm}
 \setlength{\belowcaptionskip}{0mm}
+
 \changecaptionwidth\captionwidth{0.5\linewidth}
 
 %Убираем большие расстояния по вертикали в списках
