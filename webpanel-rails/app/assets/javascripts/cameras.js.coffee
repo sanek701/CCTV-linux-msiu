@@ -42,7 +42,7 @@ jQuery ->
     cam_ids = $.map $('.camera.selected'), (obj)->
       return $(obj).data('camera-id')
     if cam_ids.length > 0
-      window.location.href = $('.watch').data('url') + '?ids=' + cam_ids.join(',') + '&template=' + $('.templates .btn.btn-success').text()
+      window.location.href = $('.watch').data('url') + '?ids=' + cam_ids.join(',') + '&template=' + $('.templates .btn.btn-success').data('template')
     false
 
   $('.templates .btn').click ->

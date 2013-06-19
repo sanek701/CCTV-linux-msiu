@@ -129,8 +129,6 @@ void* copy_input_to_output(void *ptr) {
       break;
     }
 
-    // TODO: '[rtp @ 0x979dd90] pts (450000) < dts (123436231555728) in stream 0' when playing mp4
-
     av_free_packet(&packet);
     av_init_packet(&packet);
 
@@ -168,12 +166,14 @@ void* multiple_cameras_thread(void * ptr) {
   AVCodecContext *c = screen->rtp_stream->codec;
   AVFrame *frame;
   AVPacket pkt;
-  int ret, got_output;
+  int ret, got_output, frame_num=1;
+  int64_t start_time = av_gettime();
+  int64_t pts, now;
 
   frame = avcodec_alloc_frame();
 
   /* copy data and linesize picture pointers to frame */
-  *((AVPicture *)frame) = *screen->combined_picture;
+  *((AVPicture *)frame) = screen->combined_picture;
 
   if((ret = avformat_write_header(screen->rtp_context, NULL)) < 0) {
     avformat_free_context(screen->rtp_context);
@@ -181,9 +181,10 @@ void* multiple_cameras_thread(void * ptr) {
     return NULL;
   }
 
-  av_init_packet(&pkt);
-
   while(1) {
+    if(!screen->active)
+      break;
+
     pkt.data = NULL; // packet data will be allocated by the encoder
     pkt.size = 0;
 
@@ -196,13 +197,14 @@ void* multiple_cameras_thread(void * ptr) {
     pthread_mutex_unlock(&screen->combined_picture_lock);
 
     /* If size is zero, it means the image was buffered. */
-    if (got_output) {
-      if (c->coded_frame->pts != AV_NOPTS_VALUE)
-        pkt.pts = av_rescale_q(c->coded_frame->pts, c->time_base, screen->rtp_stream->time_base);
-      if (c->coded_frame->key_frame)
+    if(got_output) {
+      if(c->coded_frame->key_frame) {
         pkt.flags |= AV_PKT_FLAG_KEY;
+      }
 
       pkt.stream_index = screen->rtp_stream->index;
+      pkt.dts = av_rescale_q(av_gettime(), AV_TIME_BASE_Q, screen->rtp_stream->time_base);
+      pkt.pts = AV_NOPTS_VALUE;
 
       /* Write the compressed frame to the media file. */
       if((ret = av_interleaved_write_frame(screen->rtp_context, &pkt)) < 0) {
@@ -210,6 +212,14 @@ void* multiple_cameras_thread(void * ptr) {
         av_err_msg("av_interleaved_write_frame", ret);
         return NULL;
       }
+    }
+
+    frame_num += 1;
+    pts = frame_num * c->time_base.num * AV_TIME_BASE / c->time_base.den;
+    now = av_gettime() - start_time;
+
+    if(pts > now) {
+      av_usleep(pts - now);
     }
 
     av_free_packet(&pkt);

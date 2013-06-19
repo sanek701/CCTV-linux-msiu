@@ -30,7 +30,7 @@ int screen_init(struct screen *screen) {
   printf("rtp_port: %d\n", screen->rtp_port);
 
   if(screen->type == REAL) {
-    if(screen->ncams == 1)
+    if(screen->tmpl_size == 1)
       ret = init_single_camera_screen(screen);
     else
       ret = init_multiple_camera_screen(screen);
@@ -47,13 +47,12 @@ int screen_init(struct screen *screen) {
       consumer->screen = screen;
       if(screen->tmpl_size > 1) {
         consumer->position = i;
-        avpicture_alloc(consumer->picture, PIX_FMT_YUV420P, cam->codec->width, cam->codec->height);
+        avpicture_alloc(&consumer->picture, PIX_FMT_YUV420P, SCREEN_WIDTH/screen->tmpl_size, SCREEN_HEIGHT/screen->tmpl_size);
         consumer->sws_context = sws_getContext(
           cam->codec->width, cam->codec->height, cam->codec->pix_fmt,
           SCREEN_WIDTH/screen->tmpl_size, SCREEN_HEIGHT/screen->tmpl_size, PIX_FMT_YUV420P,
           SWS_BILINEAR, NULL, NULL, NULL);
       } else {
-        consumer->picture = NULL;
         consumer->sws_context = NULL;
       }
       l1_insert(&cam->cam_consumers_list, &cam->consumers_lock, consumer);
@@ -86,8 +85,8 @@ int remove_screen_counsumers(void *value, void *arg) {
   struct screen *screen = (struct screen *)arg;
 
   if(consumer->screen == screen) {
-    if(consumer->picture != NULL)
-      avpicture_free(consumer->picture);
+    if(screen->tmpl_size > 1)
+      avpicture_free(&consumer->picture);
     if(consumer->sws_context != NULL)
       sws_freeContext(consumer->sws_context);
     free(consumer);
@@ -99,6 +98,8 @@ int remove_screen_counsumers(void *value, void *arg) {
 
 void screen_destroy(struct screen *screen) {
   char path[128];
+  screen->active = 0;
+
   if(screen->type == REAL) {
     for(int i=0; i < screen->ncams; i++) {
       l1_filter(&screen->cams[i]->cam_consumers_list, &screen->cams[i]->consumers_lock, &remove_screen_counsumers, screen);
@@ -108,11 +109,10 @@ void screen_destroy(struct screen *screen) {
   }
 
   if(screen->tmpl_size > 1) {
-    avpicture_free(screen->combined_picture);
+    pthread_join(screen->worker_thread, NULL);
+    avpicture_free(&screen->combined_picture);
     pthread_mutex_destroy(&screen->combined_picture_lock);
   }
-
-  printf("consumers clear\n");
 
   int port = screen->rtp_port - PORT_RANGE_START;
   ports -= 1 << port;
@@ -231,13 +231,12 @@ static int init_multiple_camera_screen(struct screen *screen) {
   avcodec_get_context_defaults3(c, codec);
 
   c->codec_id = CODEC_ID_H264;
-  c->bit_rate = 400000;
   c->width = SCREEN_WIDTH;
   c->height = SCREEN_HEIGHT;
-  c->time_base.den = 10;
+  c->pix_fmt = PIX_FMT_YUV420P;
+  c->time_base.den = 3;
   c->time_base.num = 1;
   c->gop_size = 12;
-  c->pix_fmt = PIX_FMT_YUV420P;
 
   if((ret = avcodec_open2(c, codec, NULL)) < 0) {
     avformat_free_context(rtp_context);
@@ -245,7 +244,7 @@ static int init_multiple_camera_screen(struct screen *screen) {
     return -1;
   }
 
-  if((ret = avpicture_alloc(screen->combined_picture, c->pix_fmt, c->width, c->height)) < 0) {
+  if((ret = avpicture_alloc(&screen->combined_picture, c->pix_fmt, c->width, c->height)) < 0) {
     avformat_free_context(rtp_context);
     av_err_msg("avpicture_alloc", ret);
     return -1;
@@ -262,11 +261,8 @@ static int init_multiple_camera_screen(struct screen *screen) {
     exit(EXIT_FAILURE);
   }
 
-  pthread_t multiple_cameras_io_thread;
-  if(pthread_create(&multiple_cameras_io_thread, NULL, multiple_cameras_thread, screen) < 0)
+  if(pthread_create(&screen->worker_thread, NULL, multiple_cameras_thread, screen) < 0)
     error("pthread_create");
-  if(pthread_detach(multiple_cameras_io_thread) < 0)
-    error("pthread_detach");
 
   return 0;
 }
@@ -279,7 +275,7 @@ int screen_open_video_file(struct screen *screen) {
   AVStream *input_stream;
 
   if((ext = db_find_video_file(cam->id, s->filename, &screen->timestamp)) < 0) {
-    fprintf(stderr, "db_find_video_file File not found\n");
+    fprintf(stderr, "db_find_video_file: File not found\n");
     avformat_free_context(s);
     return -1;
   }

@@ -192,8 +192,9 @@ static int detect_motion(struct motion_detection *md, AVFrame *frame) {
 }
 
 static void copy_frame_to_consumer(AVFrame *frame, int frame_height, struct cam_consumer *consumer) {
-  AVPicture *src = consumer->picture;
-  AVPicture *dst = consumer->screen->combined_picture;
+  AVPicture *src = &consumer->picture;
+  AVPicture *dst = &consumer->screen->combined_picture;
+  int x, y;
 
   int width = SCREEN_WIDTH / consumer->screen->tmpl_size;
   int height = SCREEN_HEIGHT / consumer->screen->tmpl_size;
@@ -203,11 +204,14 @@ static void copy_frame_to_consumer(AVFrame *frame, int frame_height, struct cam_
   sws_scale(consumer->sws_context, (const uint8_t* const*)frame->data, frame->linesize, 0, frame_height, (uint8_t* const*)src->data, src->linesize);
 
   pthread_mutex_lock(&consumer->screen->combined_picture_lock);
-  for(int y=0; y < height; y++) {
-    for(int x=0; x < width; x++) {
+  for(y=0; y < height; y++)
+    for(x=0; x < width; x++)
       dst->data[0][(top + y) * dst->linesize[0] + left + x] = src->data[0][y * src->linesize[0] + x];
-      dst->data[1][(top + y) * dst->linesize[1] + left + x] = src->data[1][y * src->linesize[1] + x];
-      dst->data[2][(top + y) * dst->linesize[2] + left + x] = src->data[2][y * src->linesize[2] + x];
+
+  for(y = 0; y < height/2; y++) {
+    for(x = 0; x < width/2; x++) {
+      dst->data[1][(top/2 + y) * dst->linesize[1] + left/2 + x] = src->data[1][y * src->linesize[1] + x];
+      dst->data[2][(top/2 + y) * dst->linesize[2] + left/2 + x] = src->data[2][y * src->linesize[2] + x];
     }
   }
   pthread_mutex_unlock(&consumer->screen->combined_picture_lock);

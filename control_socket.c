@@ -153,7 +153,7 @@ static void parse_command(char *buf, int client_fd, int *close_conn) {
         screen->timestamp = timestamp;\
         screen->rtp_context = NULL;
         screen->last_activity = time(NULL);
-        screen->combined_picture = NULL;
+        screen->active = 1;
         screen->io = NULL;
 
         if(screen_init(screen) < 0) {
@@ -171,9 +171,12 @@ static void parse_command(char *buf, int client_fd, int *close_conn) {
             sprintf(buf, "{ \"error\": \"Bad request\" }\n");
           } else {
             screen->timestamp = timestamp;
-            screen_open_video_file(screen);
-            sprintf(buf, "{ \"session_id\": %d, \"width\": %d, \"height\": %d }\n",
-              screen->session_id, screen->rtp_stream->codec->width,  screen->rtp_stream->codec->height);
+            if(screen_open_video_file(screen) < 0) {
+              sprintf(buf, "{ \"error\": \"Moment not found\"}\n");
+            } else {
+              sprintf(buf, "{ \"session_id\": %d, \"width\": %d, \"height\": %d }\n",
+                screen->session_id, screen->rtp_stream->codec->width,  screen->rtp_stream->codec->height);
+            }
           }
         }
       }
