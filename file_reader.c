@@ -121,6 +121,7 @@ void* copy_input_to_output(void *ptr) {
     else
       packet.dts = av_rescale_q(io->frame, time_base, io->out_stream->time_base);
 
+    packet.pts = AV_NOPTS_VALUE;
     packet.stream_index = io->out_stream->id;
 
     if((ret = av_write_frame(io->out_ctx, &packet)) < 0) {
@@ -158,6 +159,63 @@ void* copy_input_to_output(void *ptr) {
   }
 
   free(io);
+
+  return NULL;
+}
+
+void* multiple_cameras_thread(void * ptr) {
+  struct screen *screen = (struct screen *)ptr;
+  AVCodecContext *c = screen->rtp_stream->codec;
+  AVFrame *frame;
+  AVPicture picture;
+  AVPacket pkt;
+  int ret, got_output;
+
+  frame = avcodec_alloc_frame();
+
+  if((ret = avpicture_alloc(&picture, c->pix_fmt, c->width, c->height)) < 0) {
+    avformat_free_context(screen->rtp_context);
+    av_err_msg("avpicture_alloc", ret);
+    return NULL;
+  }
+
+  /* copy data and linesize picture pointers to frame */
+  *((AVPicture *)frame) = picture;
+
+  if((ret = avformat_write_header(screen->rtp_context, NULL)) < 0) {
+    avformat_free_context(screen->rtp_context);
+    av_err_msg("avformat_write_header", ret);
+    return NULL;
+  }
+
+  while(1) {
+    av_init_packet(&pkt);
+    pkt.data = NULL; // packet data will be allocated by the encoder
+    pkt.size = 0;
+
+    if((ret = avcodec_encode_video2(c, &pkt, frame, &got_output)) < 0) {
+      avformat_free_context(screen->rtp_context);
+      av_err_msg("avcodec_encode_video2", ret);
+      return NULL;
+    }
+
+    /* If size is zero, it means the image was buffered. */
+    if (got_output) {
+      if (c->coded_frame->pts != AV_NOPTS_VALUE)
+        pkt.pts = av_rescale_q(c->coded_frame->pts, c->time_base, screen->rtp_stream->time_base);
+      if (c->coded_frame->key_frame)
+        pkt.flags |= AV_PKT_FLAG_KEY;
+
+      pkt.stream_index = screen->rtp_stream->index;
+
+      /* Write the compressed frame to the media file. */
+      if((ret = av_interleaved_write_frame(screen->rtp_context, &pkt)) < 0) {
+        avformat_free_context(screen->rtp_context);
+        av_err_msg("av_interleaved_write_frame", ret);
+        return NULL;
+      }
+    }
+  }
 
   return NULL;
 }

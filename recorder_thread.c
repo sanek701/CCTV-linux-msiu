@@ -230,12 +230,12 @@ void *recorder_thread(void *ptr) {
     av_err_msg("avcodec_alloc_frame", 0);
     return NULL;
   }
-  av_init_packet(&packet);
 
   while(1) {
     cam->last_io = time(NULL);
-    ret = av_read_frame(cam->context, &packet);
-    if(ret < 0) {
+    av_init_packet(&packet);
+
+    if((ret = av_read_frame(cam->context, &packet)) < 0) {
       if(ret == AVERROR_EOF) break;
       else av_err_msg("av_read_frame", ret);
     }
@@ -293,12 +293,13 @@ void *recorder_thread(void *ptr) {
           // decode frame
           // rescale image
           // copy to output image
+          // locking
         }
       }
       pthread_mutex_unlock(&cam->consumers_lock);
     }
+
     av_free_packet(&packet);
-    av_init_packet(&packet);
     
     if(!cam->active) {
       break;

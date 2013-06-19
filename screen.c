@@ -10,12 +10,12 @@ l1 *screens = NULL;
 pthread_mutex_t screens_lock;
 
 int screen_open_video_file(struct screen *screen);
-static void init_single_camera_screen(struct screen *screen);
-static void init_multiple_camera_screen(struct screen *screen);
+static int init_single_camera_screen(struct screen *screen);
+static int init_multiple_camera_screen(struct screen *screen);
 
 int screen_init(struct screen *screen) {
   char gst_pipe[128], path[128];
-  int port;
+  int port, ret;
   unsigned int i;
 
   for(port=1, i=1; port <= 32; port+=1, i*=2) {
@@ -31,9 +31,15 @@ int screen_init(struct screen *screen) {
 
   if(screen->type == REAL) {
     if(screen->ncams == 1)
-      init_single_camera_screen(screen);
+      ret = init_single_camera_screen(screen);
     else
-      init_multiple_camera_screen(screen);
+      ret = init_multiple_camera_screen(screen);
+
+    if(ret < 0) {
+      fprintf(stderr, "screen initialization failed\n");
+      ports -= 1 << port;
+      return -1;
+    }
 
     for(i=0; i<screen->ncams; i++) {
       struct cam_consumer *consumer = (struct cam_consumer*)malloc(sizeof(struct cam_consumer));
@@ -100,23 +106,20 @@ void screen_destroy(struct screen *screen) {
   free(screen);
 }
 
-static void create_frame() {
-  AVFrame *picture = avcodec_alloc_frame();
-  uint8_t *picture_buf;
-  int size;
-  size = avpicture_get_size(PIX_FMT_YUV420P, 1024, 768);
-  picture_buf = (uint8_t *)malloc(size);
-  avpicture_fill((AVPicture *)picture, picture_buf, PIX_FMT_YUV420P, 1024, 768);
-}
-
-static void create_sdp(struct screen *screen) {
+static int create_sdp(struct screen *screen) {
   char buff[2048], fname[128];
-  av_sdp_create(&screen->rtp_context, 1, buff, sizeof(buff));
+  if(av_sdp_create(&screen->rtp_context, 1, buff, sizeof(buff)) < 0)
+    return -1;
   sprintf(fname, "/tmp/stream_%d.sdp", screen->rtp_port);
   FILE *f = fopen(fname, "w+");
+  if(f == NULL) {
+    perror("fopen");
+    return -1;
+  }
   fprintf(f, "%s", buff);
   fflush(f);
   fclose(f);
+  return 0;
 }
 
 static int init_rtp_stream(struct screen *screen, AVCodecContext *codec) {
@@ -135,19 +138,23 @@ static int init_rtp_stream(struct screen *screen, AVCodecContext *codec) {
   sprintf(rtp_context->filename, "rtp://127.0.0.1:%d", screen->rtp_port);
 
   if((ret = avio_open(&(rtp_context->pb), rtp_context->filename, AVIO_FLAG_WRITE)) < 0) {
+    avformat_free_context(rtp_context);
     av_err_msg("avio_open", ret);
     return -1;
   }
   rtp_stream = avformat_new_stream(rtp_context, (AVCodec *)codec->codec);
   if(rtp_stream == NULL) {
+    avformat_free_context(rtp_context);
     av_err_msg("avformat_new_stream", 0);
     return -1;
   }
   if((ret = avcodec_copy_context(rtp_stream->codec, (const AVCodecContext *)codec)) < 0) {
+    avformat_free_context(rtp_context);
     av_err_msg("avcodec_copy_context", ret);
     return -1;
   }
   if((ret = avformat_write_header(rtp_context, NULL)) < 0) {
+    avformat_free_context(rtp_context);
     av_err_msg("avformat_write_header", ret);
     return -1;
   }
@@ -157,17 +164,18 @@ static int init_rtp_stream(struct screen *screen, AVCodecContext *codec) {
   return 0;
 }
 
-static void init_single_camera_screen(struct screen *screen) {
+static int init_single_camera_screen(struct screen *screen) {
   struct camera *cam = screen->cams[0];
 
-  init_rtp_stream(screen, cam->codec);
-  screen->width = cam->codec->width;
-  screen->height = cam->codec->height;
+  if(init_rtp_stream(screen, cam->codec) < 0)
+    return -1;
+  if(create_sdp(screen) < 0)
+    return -1;
 
-  create_sdp(screen);
+  return 0;
 }
 
-static void init_multiple_camera_screen(struct screen *screen) {
+static int init_multiple_camera_screen(struct screen *screen) {
   AVFormatContext *rtp_context;
   AVOutputFormat *rtp_fmt;
   AVStream *rtp_stream;
@@ -180,39 +188,50 @@ static void init_multiple_camera_screen(struct screen *screen) {
 
   codec = avcodec_find_encoder(CODEC_ID_H264);
 
-  if(rtp_fmt == NULL)
+  if(rtp_fmt == NULL) {
+    avformat_free_context(rtp_context);
     av_err_msg("av_guess_format", 0);
+    return -1;
+  }
   rtp_context->oformat = rtp_fmt;
   sprintf(rtp_context->filename, "rtp://127.0.0.1:%d", screen->rtp_port);
-  if((ret = avio_open(&(rtp_context->pb), rtp_context->filename, AVIO_FLAG_WRITE)) < 0)
+  if((ret = avio_open(&(rtp_context->pb), rtp_context->filename, AVIO_FLAG_WRITE)) < 0) {
+    avformat_free_context(rtp_context);
     av_err_msg("avio_open", ret);
+    return -1;
+  }
   rtp_stream = avformat_new_stream(rtp_context, codec);
-  if(rtp_stream == NULL)
+  if(rtp_stream == NULL) {
+    avformat_free_context(rtp_context);
     av_err_msg("avformat_new_stream", 0);
+    return -1;
+  }
 
   c = rtp_stream->codec;
   avcodec_get_context_defaults3(c, codec);
 
   c->codec_id = CODEC_ID_H264;
   c->bit_rate = 400000;
-  c->width = 1024;
-  c->height = 768;
-  c->time_base.den = 25;
+  c->width = 1080;
+  c->height = 810;
+  c->time_base.den = 10;
   c->time_base.num = 1;
   c->gop_size = 12;
   c->pix_fmt = PIX_FMT_YUV420P;
 
-  avcodec_open2(c, codec, NULL);
-
-  if((ret = avformat_write_header(rtp_context, NULL)) < 0)
-    av_err_msg("avformat_write_header", ret);
-
-  create_frame();
+  if((ret = avcodec_open2(c, codec, NULL)) < 0) {
+    avformat_free_context(rtp_context);
+    av_err_msg("avcodec_open2", 0);
+    return -1;
+  }
 
   screen->rtp_context = rtp_context;
   screen->rtp_stream = rtp_stream;
 
-  create_sdp(screen);
+  if(create_sdp(screen) < 0)
+    return -1;
+
+  return 0;
 }
 
 int screen_open_video_file(struct screen *screen) {
@@ -242,7 +261,9 @@ int screen_open_video_file(struct screen *screen) {
       return -1;
     }
     input_stream = s->streams[video_stream_index];
-    if((ret = av_seek_frame(s, -1, screen->timestamp, AVSEEK_FLAG_ANY)) < 0) {
+    int64_t seek_target = av_rescale_q((int64_t)screen->timestamp * AV_TIME_BASE, AV_TIME_BASE_Q, input_stream->time_base);
+
+    if((ret = av_seek_frame(s, video_stream_index, seek_target, AVSEEK_FLAG_ANY)) < 0) {
       av_err_msg("av_seek_frame", ret);
       avformat_close_input(&s);
       return -1;
@@ -268,11 +289,12 @@ int screen_open_video_file(struct screen *screen) {
   if(pthread_detach(copy_input_to_output_thread) < 0)
     error("pthread_detach");
 
-  screen->width = cam->codec->width;
-  screen->height = cam->codec->height;
   screen->io = io;
 
-  create_sdp(screen);
+  if(create_sdp(screen) < 0) {
+    avformat_close_input(&s);
+    return -1;
+  }
 
   return 0;
 }

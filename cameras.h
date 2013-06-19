@@ -68,17 +68,13 @@ struct in_out_cpy {
 struct screen {
     int type;
     int ncams;
+    int tmpl_size;
     struct camera **cams;
     unsigned int session_id;
     time_t timestamp;
-    uint8_t **frames;
-    int left_frames;
-    pthread_mutex_t counter_lock;
     AVFormatContext *rtp_context;
     AVStream *rtp_stream;
     int rtp_port;
-    int width;
-    int height;
     struct in_out_cpy *io;
     time_t last_activity;
 };

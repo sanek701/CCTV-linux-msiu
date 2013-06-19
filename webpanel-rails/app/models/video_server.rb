@@ -11,8 +11,8 @@ class VideoServer
     result['session_id']
   end
 
-  def show_real_image(cameras)
-    result = send type: 'real', cam_ids: cameras.map(&:id)
+  def show_real_image(template, cameras)
+    result = send type: 'real', template: template, cam_ids: cameras.map(&:id)
     result['session_id']
   end
 
