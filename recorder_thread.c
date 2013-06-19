@@ -191,6 +191,28 @@ static int detect_motion(struct motion_detection *md, AVFrame *frame) {
   }
 }
 
+static void copy_frame_to_consumer(AVFrame *frame, int frame_height, struct cam_consumer *consumer) {
+  AVPicture *src = consumer->picture;
+  AVPicture *dst = consumer->screen->combined_picture;
+
+  int width = SCREEN_WIDTH / consumer->screen->tmpl_size;
+  int height = SCREEN_HEIGHT / consumer->screen->tmpl_size;
+  int left = SCREEN_WIDTH * (consumer->position % consumer->screen->tmpl_size) / consumer->screen->tmpl_size;
+  int top = SCREEN_HEIGHT * (consumer->position / consumer->screen->tmpl_size) / consumer->screen->tmpl_size;
+
+  sws_scale(consumer->sws_context, (const uint8_t* const*)frame->data, frame->linesize, 0, frame_height, (uint8_t* const*)src->data, src->linesize);
+
+  pthread_mutex_lock(&consumer->screen->combined_picture_lock);
+  for(int y=0; y < height; y++) {
+    for(int x=0; x < width; x++) {
+      dst->data[0][(top + y) * dst->linesize[0] + left + x] = src->data[0][y * src->linesize[0] + x];
+      dst->data[1][(top + y) * dst->linesize[1] + left + x] = src->data[1][y * src->linesize[1] + x];
+      dst->data[2][(top + y) * dst->linesize[2] + left + x] = src->data[2][y * src->linesize[2] + x];
+    }
+  }
+  pthread_mutex_unlock(&consumer->screen->combined_picture_lock);
+}
+
 void *recorder_thread(void *ptr) {
   struct camera *cam = (struct camera *)ptr;
   struct motion_detection md;
@@ -233,7 +255,6 @@ void *recorder_thread(void *ptr) {
 
   while(1) {
     cam->last_io = time(NULL);
-    av_init_packet(&packet);
 
     if((ret = av_read_frame(cam->context, &packet)) < 0) {
       if(ret == AVERROR_EOF) break;
@@ -285,15 +306,20 @@ void *recorder_thread(void *ptr) {
       pthread_mutex_lock(&cam->consumers_lock);
       for(l1 *p = cam->cam_consumers_list; p != NULL; p = p->next) {
         struct cam_consumer *consumer = (struct cam_consumer *)p->value;
-        if(consumer->screen->ncams == 1) {
+
+        if(consumer->screen->tmpl_size == 1) {
           packet.stream_index = consumer->screen->rtp_stream->id;
           if((ret = av_write_frame(consumer->screen->rtp_context, &packet)) < 0)
             av_err_msg("av_write_frame", ret);
         } else {
-          // decode frame
-          // rescale image
-          // copy to output image
-          // locking
+          if(!got_frame) {
+            if((ret = avcodec_decode_video2(cam->codec, frame, &got_frame, &packet)) < 0) {
+              av_err_msg("avcodec_decode_video2", ret);
+              break;
+            }
+          }
+          if(got_frame)
+            copy_frame_to_consumer(frame, cam->codec->height, consumer);
         }
       }
       pthread_mutex_unlock(&cam->consumers_lock);

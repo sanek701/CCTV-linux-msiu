@@ -1,7 +1,6 @@
 #include "cameras.h"
 #include "file_reader.h"
-
-#define PORT_RANGE_START 4000
+#include <libswscale/swscale.h>
 
 GstRTSPServer *server;
 unsigned int ports = 0;
@@ -10,6 +9,7 @@ l1 *screens = NULL;
 pthread_mutex_t screens_lock;
 
 int screen_open_video_file(struct screen *screen);
+void* multiple_cameras_thread(void * ptr);
 static int init_single_camera_screen(struct screen *screen);
 static int init_multiple_camera_screen(struct screen *screen);
 
@@ -41,11 +41,22 @@ int screen_init(struct screen *screen) {
       return -1;
     }
 
-    for(i=0; i<screen->ncams; i++) {
+    for(i=0; i < screen->ncams; i++) {
+      struct camera *cam = screen->cams[i];
       struct cam_consumer *consumer = (struct cam_consumer*)malloc(sizeof(struct cam_consumer));
       consumer->screen = screen;
-      consumer->position = i;
-      l1_insert(&screen->cams[i]->cam_consumers_list, &screen->cams[i]->consumers_lock, consumer);
+      if(screen->tmpl_size > 1) {
+        consumer->position = i;
+        avpicture_alloc(consumer->picture, PIX_FMT_YUV420P, cam->codec->width, cam->codec->height);
+        consumer->sws_context = sws_getContext(
+          cam->codec->width, cam->codec->height, cam->codec->pix_fmt,
+          SCREEN_WIDTH/screen->tmpl_size, SCREEN_HEIGHT/screen->tmpl_size, PIX_FMT_YUV420P,
+          SWS_BILINEAR, NULL, NULL, NULL);
+      } else {
+        consumer->picture = NULL;
+        consumer->sws_context = NULL;
+      }
+      l1_insert(&cam->cam_consumers_list, &cam->consumers_lock, consumer);
     }
   } else {
     if(screen_open_video_file(screen) < 0) {
@@ -75,6 +86,10 @@ int remove_screen_counsumers(void *value, void *arg) {
   struct screen *screen = (struct screen *)arg;
 
   if(consumer->screen == screen) {
+    if(consumer->picture != NULL)
+      avpicture_free(consumer->picture);
+    if(consumer->sws_context != NULL)
+      sws_freeContext(consumer->sws_context);
     free(consumer);
     return 0;
   } else {
@@ -90,6 +105,11 @@ void screen_destroy(struct screen *screen) {
     }
   } else {
     screen->io->active = 0;
+  }
+
+  if(screen->tmpl_size > 1) {
+    avpicture_free(screen->combined_picture);
+    pthread_mutex_destroy(&screen->combined_picture_lock);
   }
 
   printf("consumers clear\n");
@@ -212,8 +232,8 @@ static int init_multiple_camera_screen(struct screen *screen) {
 
   c->codec_id = CODEC_ID_H264;
   c->bit_rate = 400000;
-  c->width = 1080;
-  c->height = 810;
+  c->width = SCREEN_WIDTH;
+  c->height = SCREEN_HEIGHT;
   c->time_base.den = 10;
   c->time_base.num = 1;
   c->gop_size = 12;
@@ -225,11 +245,28 @@ static int init_multiple_camera_screen(struct screen *screen) {
     return -1;
   }
 
+  if((ret = avpicture_alloc(screen->combined_picture, c->pix_fmt, c->width, c->height)) < 0) {
+    avformat_free_context(rtp_context);
+    av_err_msg("avpicture_alloc", ret);
+    return -1;
+  }
+
   screen->rtp_context = rtp_context;
   screen->rtp_stream = rtp_stream;
 
   if(create_sdp(screen) < 0)
     return -1;
+
+  if(pthread_mutex_init(&screen->combined_picture_lock, NULL) < 0) {
+    fprintf(stderr, "pthread_mutex_init failed\n");
+    exit(EXIT_FAILURE);
+  }
+
+  pthread_t multiple_cameras_io_thread;
+  if(pthread_create(&multiple_cameras_io_thread, NULL, multiple_cameras_thread, screen) < 0)
+    error("pthread_create");
+  if(pthread_detach(multiple_cameras_io_thread) < 0)
+    error("pthread_detach");
 
   return 0;
 }

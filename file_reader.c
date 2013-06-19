@@ -167,20 +167,13 @@ void* multiple_cameras_thread(void * ptr) {
   struct screen *screen = (struct screen *)ptr;
   AVCodecContext *c = screen->rtp_stream->codec;
   AVFrame *frame;
-  AVPicture picture;
   AVPacket pkt;
   int ret, got_output;
 
   frame = avcodec_alloc_frame();
 
-  if((ret = avpicture_alloc(&picture, c->pix_fmt, c->width, c->height)) < 0) {
-    avformat_free_context(screen->rtp_context);
-    av_err_msg("avpicture_alloc", ret);
-    return NULL;
-  }
-
   /* copy data and linesize picture pointers to frame */
-  *((AVPicture *)frame) = picture;
+  *((AVPicture *)frame) = *screen->combined_picture;
 
   if((ret = avformat_write_header(screen->rtp_context, NULL)) < 0) {
     avformat_free_context(screen->rtp_context);
@@ -188,16 +181,19 @@ void* multiple_cameras_thread(void * ptr) {
     return NULL;
   }
 
+  av_init_packet(&pkt);
+
   while(1) {
-    av_init_packet(&pkt);
     pkt.data = NULL; // packet data will be allocated by the encoder
     pkt.size = 0;
 
+    pthread_mutex_lock(&screen->combined_picture_lock);
     if((ret = avcodec_encode_video2(c, &pkt, frame, &got_output)) < 0) {
       avformat_free_context(screen->rtp_context);
       av_err_msg("avcodec_encode_video2", ret);
       return NULL;
     }
+    pthread_mutex_unlock(&screen->combined_picture_lock);
 
     /* If size is zero, it means the image was buffered. */
     if (got_output) {
@@ -215,6 +211,8 @@ void* multiple_cameras_thread(void * ptr) {
         return NULL;
       }
     }
+
+    av_free_packet(&pkt);
   }
 
   return NULL;

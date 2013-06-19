@@ -6,6 +6,10 @@
 #include "l1-list.h"
 #include "database.h"
 
+#define PORT_RANGE_START 4000
+#define SCREEN_WIDTH 1080
+#define SCREEN_HEIGHT 810
+
 #define ARCHIVE 1
 #define REAL 2
 #define STATS 3
@@ -74,6 +78,8 @@ struct screen {
     time_t timestamp;
     AVFormatContext *rtp_context;
     AVStream *rtp_stream;
+    AVPicture *combined_picture;
+    pthread_mutex_t combined_picture_lock;
     int rtp_port;
     struct in_out_cpy *io;
     time_t last_activity;
@@ -82,6 +88,8 @@ struct screen {
 struct cam_consumer {
     struct screen *screen;
     int position;
+    AVPicture *picture;
+    struct SwsContext *sws_context;
 };
 
 void  error(const char *msg);

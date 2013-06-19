@@ -153,6 +153,7 @@ static void parse_command(char *buf, int client_fd, int *close_conn) {
         screen->timestamp = timestamp;\
         screen->rtp_context = NULL;
         screen->last_activity = time(NULL);
+        screen->combined_picture = NULL;
         screen->io = NULL;
 
         if(screen_init(screen) < 0) {
