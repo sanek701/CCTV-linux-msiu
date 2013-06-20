@@ -172,7 +172,7 @@ static void parse_command(char *buf, int client_fd, int *close_conn) {
           } else {
             screen->timestamp = timestamp;
             if(screen_open_video_file(screen) < 0) {
-              sprintf(buf, "{ \"error\": \"Moment not found\"}\n");
+              sprintf(buf, "{ \"error\": \"Moment not found\" }\n");
             } else {
               sprintf(buf, "{ \"session_id\": %d, \"width\": %d, \"height\": %d }\n",
                 screen->session_id, screen->rtp_stream->codec->width,  screen->rtp_stream->codec->height);
@@ -269,7 +269,7 @@ void control_socket_loop() {
       if(fds[i].revents == 0)
         continue;
       if(fds[i].revents != POLLIN) {
-        printf("Error! revents = %d\n", fds[i].revents);
+        fprintf(stderr, "Error! revents = %d\n", fds[i].revents);
       }
 
       if(fds[i].fd == socket_fd) {
@@ -281,7 +281,7 @@ void control_socket_loop() {
               perror("accept");
             break;
           }
-          printf("New incoming connection - %d\n", connection_fd);
+          fprintf(stderr, "New incoming connection - %d\n", connection_fd);
           if((flags = fcntl(connection_fd, F_GETFL, 0)) < 0)
             error("fcntl");
           if(fcntl(connection_fd, F_SETFL, flags | O_NONBLOCK) < 0)

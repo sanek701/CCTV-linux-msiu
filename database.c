@@ -276,7 +276,7 @@ int db_unlink_oldest_file() {
   time_t start_ts;
   char query[256], fname[1024];
 
-  strcpy(query, "SELECT id, camera_id, date_part('epoch', started_at at time zone 'UTC'), mp4 FROM videofiles ORDER BY started_at DESC LIMIT 1");
+  strcpy(query, "SELECT id, camera_id, date_part('epoch', started_at at time zone 'UTC'), mp4 FROM videofiles WHERE finished_at IS NOT NULL AND deleted_at is NULL ORDER BY started_at DESC LIMIT 1;");
   PGresult *result = exec_query(query);
   if(PQntuples(result) == 1) {
     char *id     = PQgetvalue(result, 0, 0);
@@ -297,10 +297,13 @@ int db_unlink_oldest_file() {
 
     snprintf(query, sizeof(query), "UPDATE videofiles SET deleted_at = NOW() at time zone 'UTC' WHERE id = %d;", video_id);
     PGresult *result = exec_query(query);
-    if(PQresultStatus(result) != PGRES_COMMAND_OK) {
+    if(PQresultStatus(result) == PGRES_COMMAND_OK) {
       fprintf(stderr, "Deleting: %s\n", fname);
       unlink(fname);
       return 1;
+    } else {
+      fprintf(stderr, "Update failed(videofile): %s\n", PQresultErrorMessage(result));
+      exit(EXIT_FAILURE);
     }
   }
 

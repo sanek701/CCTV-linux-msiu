@@ -67,6 +67,7 @@ struct in_out_cpy {
   int64_t start_time;
   struct in_out_cpy *prev_io;
   pthread_mutex_t io_lock;
+  struct screen *screen;
 };
 
 struct screen {

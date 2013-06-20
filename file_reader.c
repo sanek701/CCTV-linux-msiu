@@ -1,5 +1,6 @@
 #include <unistd.h>
 #include "cameras.h"
+#include "screen.h"
 
 int terminate_h264_to_mp4_service = 0;
 l1 *h264_to_mp4_tasks = NULL;
@@ -62,7 +63,8 @@ int h264_seek_file(AVFormatContext *s, AVStream *ist, int timestampt) {
   av_init_packet(&packet);
   while(1) {
     if((ret = av_read_frame(s, &packet)) < 0) {
-      av_err_msg("av_read_frame", ret);
+      if(ret != AVERROR_EOF)
+        av_err_msg("av_read_frame", ret);
       return -1;
     }
 
@@ -106,7 +108,11 @@ void* copy_input_to_output(void *ptr) {
     got_key_frame = 1;
 
     if(io->prev_io != NULL) {
-      pthread_mutex_init(&io->prev_io->io_lock, NULL);
+      if(pthread_mutex_init(&io->prev_io->io_lock, NULL) < 0) {
+        fprintf(stderr, "pthread_mutex_init failed\n");
+        break;
+      }
+
       pthread_mutex_lock(&io->prev_io->io_lock);
       io->start_time = io->prev_io->start_time;
       io->frame = io->prev_io->frame + 1;
@@ -151,6 +157,8 @@ void* copy_input_to_output(void *ptr) {
       av_err_msg("av_write_trailer", ret);
     avio_close(io->out_ctx->pb);
     avformat_free_context(io->out_ctx);
+    if(io->screen != NULL)
+      screen_remove(io->screen);
   } else {
     pthread_mutex_unlock(&io->io_lock); // release next io
     pthread_mutex_destroy(&io->io_lock);

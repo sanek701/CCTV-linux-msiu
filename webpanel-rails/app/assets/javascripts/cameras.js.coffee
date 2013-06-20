@@ -107,7 +107,7 @@ jQuery ->
   $('#zoom-in').on 'mousedown', ->
     width = $('.timeline').data('width')
     @timeout = setInterval ->
-      width += 5
+      width += 10
       $('.timeline').data('width', width)
       $('.timeline').css('width', "#{width}%")
     , 200
@@ -116,8 +116,8 @@ jQuery ->
   $('#zoom-out').on 'mousedown', ->
     width = $('.timeline').data('width')
     @timeout = setInterval ->
-      if width-5 >= 100
-        width -= 5
+      if width-10 >= 100
+        width -= 10
         $('.timeline').data('width', width)
         $('.timeline').css('width', "#{width}%")
     , 200

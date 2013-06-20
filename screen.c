@@ -13,6 +13,11 @@ void* multiple_cameras_thread(void * ptr);
 static int init_single_camera_screen(struct screen *screen);
 static int init_multiple_camera_screen(struct screen *screen);
 
+void free_port(int port) {
+  ports -= 1 << (port-1);
+  fprintf(stderr, "free port %d. ports = %X\n", port, ports);
+}
+
 int screen_init(struct screen *screen) {
   char gst_pipe[128], path[128];
   int port, ret;
@@ -24,10 +29,14 @@ int screen_init(struct screen *screen) {
       break;
     }
   }
+  if(port > 32) {
+    fprintf(stderr, "All ports in use\n");
+    return -1;
+  }
 
   screen->rtp_port = PORT_RANGE_START + port;
 
-  printf("rtp_port: %d\n", screen->rtp_port);
+  fprintf(stderr, "rtp_port: %d\n", screen->rtp_port);
 
   if(screen->type == REAL) {
     if(screen->tmpl_size == 1)
@@ -37,7 +46,7 @@ int screen_init(struct screen *screen) {
 
     if(ret < 0) {
       fprintf(stderr, "screen initialization failed\n");
-      ports -= 1 << port;
+      free_port(port);
       return -1;
     }
 
@@ -60,7 +69,7 @@ int screen_init(struct screen *screen) {
   } else {
     if(screen_open_video_file(screen) < 0) {
       fprintf(stderr, "open_video_file failed\n");
-      ports -= 1 << port;
+      free_port(port);
       return -1;
     }
   }
@@ -105,6 +114,7 @@ void screen_destroy(struct screen *screen) {
       l1_filter(&screen->cams[i]->cam_consumers_list, &screen->cams[i]->consumers_lock, &remove_screen_counsumers, screen);
     }
   } else {
+    screen->io->screen = NULL;
     screen->io->active = 0;
   }
 
@@ -115,7 +125,7 @@ void screen_destroy(struct screen *screen) {
   }
 
   int port = screen->rtp_port - PORT_RANGE_START;
-  ports -= 1 << port;
+  free_port(port);
 
   sprintf(path, "/stream_%d", screen->session_id);
   GstRTSPMediaMapping *mapping = gst_rtsp_server_get_media_mapping(server);
@@ -124,6 +134,11 @@ void screen_destroy(struct screen *screen) {
 
   free(screen->cams);
   free(screen);
+}
+
+void screen_remove(struct screen *screen) {
+  l1_remove(&screens, &screens_lock, screen);
+  screen_destroy(screen);
 }
 
 static int create_sdp(struct screen *screen) {
@@ -286,7 +301,10 @@ int screen_open_video_file(struct screen *screen) {
       avformat_free_context(s);
       return -1;
     }
-    h264_seek_file(s, input_stream, screen->timestamp);
+    if(h264_seek_file(s, input_stream, screen->timestamp) < 0) {
+      avformat_free_context(s);
+      return -1;
+    }
   } else {
     if((video_stream_index = open_input(s, NULL)) < 0) {
       fprintf(stderr, "open_input failed");
@@ -315,6 +333,7 @@ int screen_open_video_file(struct screen *screen) {
   io->close_output = 1;
   io->rate_emu = 1;
   io->active = 1;
+  io->screen = screen;
 
   pthread_t copy_input_to_output_thread;
   if(pthread_create(&copy_input_to_output_thread, NULL, copy_input_to_output, io) < 0)
