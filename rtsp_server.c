@@ -1,8 +1,11 @@
+#include "cameras.h"
+
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 #include <netinet/in.h>
 #include <sys/poll.h>
@@ -20,7 +23,7 @@
 #define PLAY 5
 #define PAUSE 6
 
-int should_terminate = 0;
+extern int should_terminate;
 
 static struct sockaddr_in address, client;
 static int socket_fd, connection_fd;
@@ -33,13 +36,19 @@ static int timeout = 5000;
 
 static void parse_command(char *buf, int len, int client_fd, int *close_conn);
 static void snd(int fd, char *buffer, int *close_conn);
+static void rtsp_server_loop();
 
-void error(const char *msg) {
-  perror(msg);
-  exit(EXIT_FAILURE);
-}
+/*
+static l1 *sessions = NULL;
+static pthread_mutex_t sessions_lock;
 
-int init_rtsp_server() {
+struct session {
+  char *session_id;
+  struct screen *screen;
+};
+*/
+
+void* start_rtsp_server(void *ptr) {
   int flags, on = 1;
   memset(&address, 0, address_length);
   memset(&fds, 0 , sizeof(fds));
@@ -62,10 +71,11 @@ int init_rtsp_server() {
   if(listen(socket_fd, 5) < 0)
     error("listen");
 
-  return 0;
+  rtsp_server_loop();
+  return NULL;
 }
 
-int rtsp_server_loop() {
+void rtsp_server_loop() {
   int current_size, close_conn, compress_array = 0;
   int i,j,k,ns,rd,flags;
   char *buf;
@@ -178,10 +188,10 @@ int rtsp_server_loop() {
 static void parse_command(char *buf, int len, int client_fd, int *close_conn) {
   char out[128];
   char *req = buf;
-  char *url, *sdp, *header;
+  char *url, *sdp=NULL, *header;
   char *transport, *session;
   int method, CSeq = 0;
-  int c, h = 0; 
+  int c, h = 0;
 
   printf("------->\n");
   printf("%s", buf);
@@ -257,18 +267,24 @@ static void parse_command(char *buf, int len, int client_fd, int *close_conn) {
     snd(client_fd, out, close_conn);
     snd(client_fd, "Content-Type: application/sdp\n", close_conn);
 
-    //av_sdp_create(context, 1, buff, sizeof(buff));
+    //parse url
+    //find screen
+    //sdp = create_sdp(screen);
     sprintf(out, "Content-Length: %d\n\n", strlen(sdp));
     snd(client_fd, out, close_conn);
     snd(client_fd, sdp, close_conn);
+    //free(sdp);
   } else if (method == SETUP) {
     snd(client_fd, "RTSP/1.0 200 OK\n", close_conn);
     snd(client_fd, out, close_conn);
     sprintf(out, "Session: %d\n", 23456789);
     snd(client_fd, out, close_conn);
+    if(strcmp(transport, "RTP/AVP;unicast;") != 0) {
+      printf("Transport not supported\n");
+    }
     snd(client_fd, "Transport: RTP/AVP;unicast;\n", close_conn);
   } else if (method == PLAY) {
-
+    printf("Session = %s\n", session);
   }
 }
 
@@ -278,11 +294,4 @@ static void snd(int fd, char *buffer, int *close_conn) {
     perror("send");
     *close_conn = 1;
   }
-}
-
-int main() {
-  init_rtsp_server();
-  rtsp_server_loop();
-
-  return 0;
 }

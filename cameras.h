@@ -1,8 +1,6 @@
 #include <pthread.h>
 #include <libavformat/avformat.h>
 #include <cv.h>
-#include <gst/gst.h>
-#include <gst/rtsp-server/rtsp-server.h>
 #include "l1-list.h"
 #include "database.h"
 
@@ -83,7 +81,6 @@ struct screen {
     AVPicture combined_picture;
     pthread_t worker_thread;
     pthread_mutex_t combined_picture_lock;
-    int rtp_port;
     struct in_out_cpy *io;
     time_t last_activity;
 };
@@ -97,6 +94,7 @@ struct cam_consumer {
 
 void  error(const char *msg);
 void  av_err_msg(char *msg, int errnum);
+char* random_string(int len);
 void* recorder_thread(void *ptr);
 void* start_h264_to_mp4_service(void *ptr);
 AVStream* init_h264_read_ctx(AVFormatContext *s, struct camera *cam);

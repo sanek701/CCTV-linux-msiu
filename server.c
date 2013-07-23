@@ -36,13 +36,22 @@ void av_err_msg(char *msg, int errnum) {
   }
 }
 
+char* random_string(int len) {
+  char *str = (char*)malloc(len+1);
+  for(int i=0; i<len; i++) {
+    if(rand()%36 > 25)
+      str[i] = (char)((int)'0' + rand()%10);
+    else
+      str[i] = (char)((int)'a' + rand()%26);
+  }
+  return str;
+}
+
 int main(int argc, char** argv) {
   if(argc < 2) {
     fprintf(stderr, "specify config file\n");
     exit(EXIT_FAILURE);
   }
-
-  gst_init(&argc, &argv);
 
   control_socket_init();
   fprintf(stderr, "Control socket initialized\n");
@@ -74,11 +83,13 @@ int main(int argc, char** argv) {
     exit(EXIT_FAILURE);
   }
 
+  /*
   pthread_t rtsp_server_thread;
   if(pthread_create(&rtsp_server_thread, NULL, start_rtsp_server, NULL) < 0)
     error("pthread_create");
   if(pthread_detach(rtsp_server_thread) < 0)
     error("pthread_detach");
+  */
 
   pthread_t h264_to_mp4_thread;
   if(pthread_create(&h264_to_mp4_thread, NULL, start_h264_to_mp4_service, NULL) < 0)

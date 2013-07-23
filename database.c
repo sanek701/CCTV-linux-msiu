@@ -3,6 +3,8 @@
 #include <strings.h>
 #include <libpq-fe.h>
 #include <libconfig.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 extern char *store_dir;
 

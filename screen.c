@@ -2,9 +2,6 @@
 #include "file_reader.h"
 #include <libswscale/swscale.h>
 
-GstRTSPServer *server;
-unsigned int ports = 0;
-
 l1 *screens = NULL;
 pthread_mutex_t screens_lock;
 
@@ -13,30 +10,9 @@ void* multiple_cameras_thread(void * ptr);
 static int init_single_camera_screen(struct screen *screen);
 static int init_multiple_camera_screen(struct screen *screen);
 
-void free_port(int port) {
-  ports -= 1 << (port-1);
-  fprintf(stderr, "free port %d. ports = %X\n", port, ports);
-}
-
 int screen_init(struct screen *screen) {
-  char gst_pipe[128], path[128];
-  int port, ret;
+  int ret;
   unsigned int i;
-
-  for(port=1, i=1; port <= 32; port+=1, i*=2) {
-    if((ports & i) == 0) {
-      ports |= i;
-      break;
-    }
-  }
-  if(port > 32) {
-    fprintf(stderr, "All ports in use\n");
-    return -1;
-  }
-
-  screen->rtp_port = PORT_RANGE_START + port;
-
-  fprintf(stderr, "rtp_port: %d\n", screen->rtp_port);
 
   if(screen->type == REAL) {
     if(screen->tmpl_size == 1)
@@ -46,7 +22,6 @@ int screen_init(struct screen *screen) {
 
     if(ret < 0) {
       fprintf(stderr, "screen initialization failed\n");
-      free_port(port);
       return -1;
     }
 
@@ -69,20 +44,9 @@ int screen_init(struct screen *screen) {
   } else {
     if(screen_open_video_file(screen) < 0) {
       fprintf(stderr, "open_video_file failed\n");
-      free_port(port);
       return -1;
     }
   }
-
-  sprintf(gst_pipe, "( filesrc location=/tmp/stream_%d.sdp ! sdpdemux name=dynpay0 )", screen->rtp_port);
-  sprintf(path, "/stream_%d", screen->session_id);
-
-  GstRTSPMediaFactory *factory = gst_rtsp_media_factory_new();
-  GstRTSPMediaMapping *mapping = gst_rtsp_server_get_media_mapping(server);
-  gst_rtsp_media_factory_set_launch(factory, gst_pipe);
-  gst_rtsp_media_mapping_add_factory(mapping, path, factory);
-  gst_rtsp_media_factory_set_shared(factory, TRUE);
-  g_object_unref(mapping);
 
   l1_insert(&screens, &screens_lock, screen);
 
@@ -106,7 +70,6 @@ int remove_screen_counsumers(void *value, void *arg) {
 }
 
 void screen_destroy(struct screen *screen) {
-  char path[128];
   screen->active = 0;
 
   if(screen->type == REAL) {
@@ -124,14 +87,6 @@ void screen_destroy(struct screen *screen) {
     pthread_mutex_destroy(&screen->combined_picture_lock);
   }
 
-  int port = screen->rtp_port - PORT_RANGE_START;
-  free_port(port);
-
-  sprintf(path, "/stream_%d", screen->session_id);
-  GstRTSPMediaMapping *mapping = gst_rtsp_server_get_media_mapping(server);
-  gst_rtsp_media_mapping_remove_factory(mapping, path);
-  g_object_unref(mapping);
-
   free(screen->cams);
   free(screen);
 }
@@ -141,20 +96,13 @@ void screen_remove(struct screen *screen) {
   screen_destroy(screen);
 }
 
-static int create_sdp(struct screen *screen) {
-  char buff[2048], fname[128];
+static char* create_sdp(struct screen *screen) {
+  char buff[2048];
   if(av_sdp_create(&screen->rtp_context, 1, buff, sizeof(buff)) < 0)
-    return -1;
-  sprintf(fname, "/tmp/stream_%d.sdp", screen->rtp_port);
-  FILE *f = fopen(fname, "w+");
-  if(f == NULL) {
-    perror("fopen");
-    return -1;
-  }
-  fprintf(f, "%s", buff);
-  fflush(f);
-  fclose(f);
-  return 0;
+    return NULL;
+  char *sdp = (char*)malloc(strlen(buff)+1);
+  strcpy(sdp, buff);
+  return sdp;
 }
 
 static int init_rtp_stream(struct screen *screen, AVCodecContext *codec) {
@@ -170,7 +118,6 @@ static int init_rtp_stream(struct screen *screen, AVCodecContext *codec) {
     return -1;
   }
   rtp_context->oformat = rtp_fmt;
-  sprintf(rtp_context->filename, "rtp://127.0.0.1:%d", screen->rtp_port);
 
   if((ret = avio_open(&(rtp_context->pb), rtp_context->filename, AVIO_FLAG_WRITE)) < 0) {
     avformat_free_context(rtp_context);
@@ -229,7 +176,7 @@ static int init_multiple_camera_screen(struct screen *screen) {
     return -1;
   }
   rtp_context->oformat = rtp_fmt;
-  sprintf(rtp_context->filename, "rtp://127.0.0.1:%d", screen->rtp_port);
+
   if((ret = avio_open(&(rtp_context->pb), rtp_context->filename, AVIO_FLAG_WRITE)) < 0) {
     avformat_free_context(rtp_context);
     av_err_msg("avio_open", ret);
@@ -360,30 +307,4 @@ int filter_timeout_screen(void *value, void *arg) {
   } else {
     return 1;
   }
-}
-
-static gboolean timeout(GstRTSPServer *server, gboolean ignored) {
-  GstRTSPSessionPool *pool;
-  pool = gst_rtsp_server_get_session_pool(server);
-  int removed = gst_rtsp_session_pool_cleanup(pool);
-  g_object_unref(pool);
-
-  if(removed > 0)
-    fprintf(stderr, "Removed %d sessions\n", removed);
-
-  //l1_filter(&screens, &screens_lock, &filter_timeout_screen, NULL);
-  return TRUE;
-}
-
-void *start_rtsp_server(void* ptr) {
-  GMainLoop *loop;
-
-  loop = g_main_loop_new(NULL, FALSE);
-  server = gst_rtsp_server_new();
-
-  gst_rtsp_server_attach(server, NULL);
-  g_timeout_add_seconds(3, (GSourceFunc)timeout, server);
-  fprintf(stderr, "Starting gst-rtsp-server\n");
-  g_main_loop_run(loop);
-  return NULL;
 }
