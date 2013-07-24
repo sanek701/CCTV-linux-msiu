@@ -41,11 +41,6 @@ static void rtsp_server_loop();
 /*
 static l1 *sessions = NULL;
 static pthread_mutex_t sessions_lock;
-
-struct session {
-  char *session_id;
-  struct screen *screen;
-};
 */
 
 void* start_rtsp_server(void *ptr) {
@@ -189,7 +184,7 @@ static void parse_command(char *buf, int len, int client_fd, int *close_conn) {
   char out[128];
   char *req = buf;
   char *url, *sdp=NULL, *header;
-  char *transport, *session;
+  char *transport, *session, *screen_id;
   int method, CSeq = 0;
   int c, h = 0;
 
@@ -221,7 +216,10 @@ static void parse_command(char *buf, int len, int client_fd, int *close_conn) {
   while(*req != ' ') req += 1;
   *req = '\0';
 
-  printf("url: <%s>\n", url);
+  screen_id = url;
+
+  printf("url: <%s>, screen_id: %s\n", url, screen_id);
+
 
   while(*req != '\n') req += 1;
   req += 1;
@@ -258,33 +256,42 @@ static void parse_command(char *buf, int len, int client_fd, int *close_conn) {
 
   sprintf(out, "CSeq: %d\n", CSeq);
 
-  if(method == OPTIONS) {
-    snd(client_fd, "RTSP/1.0 200 OK\n", close_conn);
-    snd(client_fd, out, close_conn);
-    snd(client_fd, "Public: OPTIONS, DESCRIBE, SETUP, TEARDOWN, PLAY, PAUSE\n\n", close_conn);
-  } else if (method == DESCRIBE) {
-    snd(client_fd, "RTSP/1.0 200 OK\n", close_conn);
-    snd(client_fd, out, close_conn);
-    snd(client_fd, "Content-Type: application/sdp\n", close_conn);
+  switch(method) {
+    case OPTIONS:
+      snd(client_fd, "RTSP/1.0 200 OK\n", close_conn);
+      snd(client_fd, out, close_conn);
+      snd(client_fd, "Public: OPTIONS, DESCRIBE, SETUP, TEARDOWN, PLAY, PAUSE\n\n", close_conn);
+      break;
+    case DESCRIBE:
+      snd(client_fd, "RTSP/1.0 200 OK\n", close_conn);
+      snd(client_fd, out, close_conn);
+      snd(client_fd, "Content-Type: application/sdp\n", close_conn);
 
-    //parse url
-    //find screen
-    //sdp = create_sdp(screen);
-    sprintf(out, "Content-Length: %d\n\n", strlen(sdp));
-    snd(client_fd, out, close_conn);
-    snd(client_fd, sdp, close_conn);
-    //free(sdp);
-  } else if (method == SETUP) {
-    snd(client_fd, "RTSP/1.0 200 OK\n", close_conn);
-    snd(client_fd, out, close_conn);
-    sprintf(out, "Session: %d\n", 23456789);
-    snd(client_fd, out, close_conn);
-    if(strcmp(transport, "RTP/AVP;unicast;") != 0) {
-      printf("Transport not supported\n");
-    }
-    snd(client_fd, "Transport: RTP/AVP;unicast;\n", close_conn);
-  } else if (method == PLAY) {
-    printf("Session = %s\n", session);
+      if(strncasecmp(url, "rtsp://", 7) != 0) {
+        printf("bad url\n");
+      }
+      //find screen
+      //sdp = create_sdp(screen);
+      sprintf(out, "Content-Length: %d\n\n", strlen(sdp));
+      snd(client_fd, out, close_conn);
+      snd(client_fd, sdp, close_conn);
+      //free(sdp);
+      break;
+    case SETUP:
+      snd(client_fd, "RTSP/1.0 200 OK\n", close_conn);
+      snd(client_fd, out, close_conn);
+      session = random_string(8);
+      sprintf(out, "Session: %s\n", session);
+      snd(client_fd, out, close_conn);
+      if(strcmp(transport, "RTP/AVP;unicast;") != 0) {
+        printf("Transport not supported\n");
+      }
+      snd(client_fd, "Transport: RTP/AVP;unicast;\n", close_conn);
+      free(session);
+      break;
+    case PLAY:
+      printf("Session = %s\n", session);
+      break;
   }
 }
 
@@ -295,3 +302,27 @@ static void snd(int fd, char *buffer, int *close_conn) {
     *close_conn = 1;
   }
 }
+
+/* PLAY+SETUP
+  screen = (struct screen *) l1_find(&screens, &screens_lock, &find_screen_func, screen_id);
+
+  // all
+  rtp_context = screen->rtp_context;
+  if((ret = avio_open(&(rtp_context->pb), rtp_context->filename, AVIO_FLAG_WRITE)) < 0) {
+    avformat_free_context(rtp_context);
+    av_err_msg("avio_open", ret);
+    return -1;
+  }
+  screen->active = 1;
+
+  // file
+  pthread_t copy_input_to_output_thread;
+  if(pthread_create(&copy_input_to_output_thread, NULL, copy_input_to_output, io) < 0)
+    error("pthread_create");
+  if(pthread_detach(copy_input_to_output_thread) < 0)
+    error("pthread_detach");
+
+  // multiple
+  if(pthread_create(&screen->worker_thread, NULL, multiple_cameras_thread, screen) < 0)
+    error("pthread_create");
+*/

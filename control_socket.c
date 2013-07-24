@@ -27,7 +27,6 @@ static int nfds = 1, rc;
 static int timeout = 5000;
 static int reads[MAX_CLIENTS];
 static char buffer[BUF_SIZE * MAX_CLIENTS];
-static unsigned int session_id = 0;
 
 static time_t last_disk_space_check = 0;
 
@@ -65,8 +64,8 @@ static struct camera** get_cams_by_ids(int *cam_ids, int ncams) {
 
 int find_screen_func(void *value, void *arg) {
   struct screen *screen = value;
-  int session_id = *((int *)arg);
-  if(screen->session_id == session_id)
+  char* screen_id = (char *)arg;
+  if(strcpy(screen->screen_id, screen_id) == 0)
     return 1;
   else
     return 0;
@@ -88,9 +87,9 @@ static void parse_command(char *buf, int client_fd, int *close_conn) {
   int type = 0;
   int ncams = 0;
   int *cam_ids = NULL;
-  int ssid = 0;
   int tmpl_size = 1;
   time_t timestamp = 0;
+  char *screen_id = NULL;
 
   struct screen *screen = NULL;
   struct camera *cam;
@@ -118,8 +117,6 @@ static void parse_command(char *buf, int client_fd, int *close_conn) {
         type = STATS;
       else if(strcmp(string_value, "cam_info") == 0)
         type = CAM_INFO;
-      else if(strcmp(string_value, "screen_ping") == 0)
-        type = SCREEN_PING;
     } else if (strcmp(key, "cam_ids") == 0) {
       ncams = value->u.array.length;
       cam_ids = (int*)malloc(ncams * sizeof(int));
@@ -129,8 +126,9 @@ static void parse_command(char *buf, int client_fd, int *close_conn) {
       }
     } else if (strcmp(key, "timestamp") == 0) {
       timestamp = value->u.integer;
-    } else if (strcmp(key, "session_id") == 0) {
-      ssid = value->u.integer;
+    } else if (strcmp(key, "screen_id") == 0) {
+      screen_id = (char*)malloc(strlen(value->u.string.ptr)+1);
+      strcpy(screen_id, value->u.string.ptr);
     } else if (strcmp(key, "template") == 0) {
       tmpl_size = value->u.integer;
     }
@@ -140,30 +138,26 @@ static void parse_command(char *buf, int client_fd, int *close_conn) {
   switch(type) {
     case ARCHIVE:
     case REAL:
-      if(ssid == 0) {
-        session_id += 1;
-        ssid = session_id;
-
+      if(screen_id == NULL) {
         screen = (struct screen *)malloc(sizeof(struct screen));
         screen->type = type;
         screen->ncams = ncams;
-        screen->session_id = ssid;
+        screen->screen_id = random_string(8);
         screen->tmpl_size = tmpl_size;
         screen->cams = get_cams_by_ids(cam_ids, ncams);
         screen->timestamp = timestamp;\
         screen->rtp_context = NULL;
-        screen->last_activity = time(NULL);
-        screen->active = 1;
+        screen->active = 0;
         screen->io = NULL;
 
         if(screen_init(screen) < 0) {
           sprintf(buf, "{ \"error\": \"Screen initialization failed\" }\n");
         } else {
-          sprintf(buf, "{ \"session_id\": %d, \"width\": %d, \"height\": %d }\n",
-            screen->session_id, screen->rtp_stream->codec->width,  screen->rtp_stream->codec->height);
+          sprintf(buf, "{ \"screen_id\": %s, \"width\": %d, \"height\": %d }\n",
+            screen->screen_id, screen->rtp_stream->codec->width,  screen->rtp_stream->codec->height);
         }
       } else {
-        screen = (struct screen *) l1_find(&screens, &screens_lock, &find_screen_func, &ssid);
+        screen = (struct screen *) l1_find(&screens, &screens_lock, &find_screen_func, screen_id);
         if(screen == NULL) {
           sprintf(buf, "{ \"error\": \"Screen not found\" }\n");
         } else {
@@ -174,8 +168,8 @@ static void parse_command(char *buf, int client_fd, int *close_conn) {
             if(screen_open_video_file(screen) < 0) {
               sprintf(buf, "{ \"error\": \"Moment not found\" }\n");
             } else {
-              sprintf(buf, "{ \"session_id\": %d, \"width\": %d, \"height\": %d }\n",
-                screen->session_id, screen->rtp_stream->codec->width,  screen->rtp_stream->codec->height);
+              sprintf(buf, "{ \"screen_id\": %s, \"width\": %d, \"height\": %d }\n",
+                screen->screen_id, screen->rtp_stream->codec->width, screen->rtp_stream->codec->height);
             }
           }
         }
@@ -201,15 +195,6 @@ static void parse_command(char *buf, int client_fd, int *close_conn) {
           cam->input_stream->r_frame_rate.den, cam->input_stream->r_frame_rate.num);
       }
       break;
-    case SCREEN_PING:
-      screen = (struct screen *) l1_find(&screens, &screens_lock, &find_screen_func, &ssid);
-      if(screen == NULL) {
-        sprintf(buf, "{ \"error\": \"Screen not found\" }\n");
-      } else {
-        screen->last_activity = time(NULL);
-        sprintf(buf, "{ \"ok\": \"ok\" }\n");
-      }
-      break;
     default:
       sprintf(buf, "{ \"error\": \"Command not found\" }\n");
       break;
@@ -219,6 +204,8 @@ static void parse_command(char *buf, int client_fd, int *close_conn) {
 
   if(cam_ids != NULL)
     free(cam_ids);
+  if(screen_id != NULL)
+    free(screen_id);
 }
 
 void control_socket_init() {

@@ -12,44 +12,43 @@
 #define REAL 2
 #define STATS 3
 #define CAM_INFO 4
-#define SCREEN_PING 5
 
 #define MP4_FILE 100
 #define H264_FILE 101
 
 struct camera {
-    int id;
-    char *url;
-    char *name;
-    int analize_frames;
-    int threshold;
-    int motion_delay;
-    int active;
-    
-    AVFormatContext *context;
-    AVCodecContext  *codec;
-    AVStream        *input_stream;
-    AVFormatContext *output_context;
-    AVStream        *output_stream;
-    AVIOInterruptCB int_cb;
-    int video_stream_index;
+  int id;
+  char *url;
+  char *name;
+  int analize_frames;
+  int threshold;
+  int motion_delay;
+  int active;
+  
+  AVFormatContext *context;
+  AVCodecContext  *codec;
+  AVStream        *input_stream;
+  AVFormatContext *output_context;
+  AVStream        *output_stream;
+  AVIOInterruptCB int_cb;
+  int video_stream_index;
 
-    int file_id;
-    time_t file_started_at;
-    time_t last_io;
-    time_t last_screenshot;
+  int file_id;
+  time_t file_started_at;
+  time_t last_io;
+  time_t last_screenshot;
 
-    l1* cam_consumers_list;
-    pthread_mutex_t consumers_lock;
+  l1* cam_consumers_list;
+  pthread_mutex_t consumers_lock;
 };
 
 struct motion_detection {
-    struct camera *cam;
-    struct SwsContext *img_convert_ctx;
-    IplImage *prev;
-    IplImage *cur;
-    IplImage *silh;
-    uint8_t* buffer;
+  struct camera *cam;
+  struct SwsContext *img_convert_ctx;
+  IplImage *prev;
+  IplImage *cur;
+  IplImage *silh;
+  uint8_t* buffer;
 };
 
 struct in_out_cpy {
@@ -69,27 +68,31 @@ struct in_out_cpy {
 };
 
 struct screen {
-    int type;
-    int ncams;
-    int tmpl_size;
-    int active;
-    struct camera **cams;
-    unsigned int session_id;
-    time_t timestamp;
-    AVFormatContext *rtp_context;
-    AVStream *rtp_stream;
-    AVPicture combined_picture;
-    pthread_t worker_thread;
-    pthread_mutex_t combined_picture_lock;
-    struct in_out_cpy *io;
-    time_t last_activity;
+  int type;
+  int ncams;
+  int tmpl_size;
+  int active;
+  char *screen_id;
+  struct camera **cams;
+  time_t timestamp;
+  AVFormatContext *rtp_context;
+  AVStream *rtp_stream;
+  AVPicture combined_picture;
+  pthread_t worker_thread;
+  pthread_mutex_t combined_picture_lock;
+  struct in_out_cpy *io;
 };
 
 struct cam_consumer {
-    struct screen *screen;
-    int position;
-    AVPicture picture;
-    struct SwsContext *sws_context;
+  struct screen *screen;
+  int position;
+  AVPicture picture;
+  struct SwsContext *sws_context;
+};
+
+struct rtsp_session {
+  char *session_id;
+  struct screen *screen;
 };
 
 void  error(const char *msg);

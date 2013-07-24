@@ -311,6 +311,8 @@ void *recorder_thread(void *ptr) {
       pthread_mutex_lock(&cam->consumers_lock);
       for(l1 *p = cam->cam_consumers_list; p != NULL; p = p->next) {
         struct cam_consumer *consumer = (struct cam_consumer *)p->value;
+        if(!consumer->screen->active)
+          continue;
 
         if(consumer->screen->tmpl_size == 1) {
           packet.stream_index = consumer->screen->rtp_stream->id;

@@ -87,6 +87,7 @@ void screen_destroy(struct screen *screen) {
     pthread_mutex_destroy(&screen->combined_picture_lock);
   }
 
+  free(screen->screen_id);
   free(screen->cams);
   free(screen);
 }
@@ -119,11 +120,8 @@ static int init_rtp_stream(struct screen *screen, AVCodecContext *codec) {
   }
   rtp_context->oformat = rtp_fmt;
 
-  if((ret = avio_open(&(rtp_context->pb), rtp_context->filename, AVIO_FLAG_WRITE)) < 0) {
-    avformat_free_context(rtp_context);
-    av_err_msg("avio_open", ret);
-    return -1;
-  }
+  strcpy(rtp_context->filename, "rtp://0.0.0.0");
+
   rtp_stream = avformat_new_stream(rtp_context, (AVCodec *)codec->codec);
   if(rtp_stream == NULL) {
     avformat_free_context(rtp_context);
@@ -151,8 +149,6 @@ static int init_single_camera_screen(struct screen *screen) {
 
   if(init_rtp_stream(screen, cam->codec) < 0)
     return -1;
-  if(create_sdp(screen) < 0)
-    return -1;
 
   return 0;
 }
@@ -177,11 +173,8 @@ static int init_multiple_camera_screen(struct screen *screen) {
   }
   rtp_context->oformat = rtp_fmt;
 
-  if((ret = avio_open(&(rtp_context->pb), rtp_context->filename, AVIO_FLAG_WRITE)) < 0) {
-    avformat_free_context(rtp_context);
-    av_err_msg("avio_open", ret);
-    return -1;
-  }
+  strcpy(rtp_context->filename, "rtp://0.0.0.0");
+
   rtp_stream = avformat_new_stream(rtp_context, codec);
   if(rtp_stream == NULL) {
     avformat_free_context(rtp_context);
@@ -222,9 +215,6 @@ static int init_multiple_camera_screen(struct screen *screen) {
     fprintf(stderr, "pthread_mutex_init failed\n");
     exit(EXIT_FAILURE);
   }
-
-  if(pthread_create(&screen->worker_thread, NULL, multiple_cameras_thread, screen) < 0)
-    error("pthread_create");
 
   return 0;
 }
@@ -282,29 +272,7 @@ int screen_open_video_file(struct screen *screen) {
   io->active = 1;
   io->screen = screen;
 
-  pthread_t copy_input_to_output_thread;
-  if(pthread_create(&copy_input_to_output_thread, NULL, copy_input_to_output, io) < 0)
-    error("pthread_create");
-  if(pthread_detach(copy_input_to_output_thread) < 0)
-    error("pthread_detach");
-
   screen->io = io;
 
-  if(create_sdp(screen) < 0) {
-    avformat_close_input(&s);
-    return -1;
-  }
-
   return 0;
-}
-
-int filter_timeout_screen(void *value, void *arg) {
-  struct screen *screen = (struct screen *)value;
-  if(time(NULL) - screen->last_activity > 10) {
-    printf("Killing session_id: %d\n", screen->session_id);
-    screen_destroy(screen);
-    return 0;
-  } else {
-    return 1;
-  }
 }

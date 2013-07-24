@@ -169,7 +169,7 @@ void* copy_input_to_output(void *ptr) {
   return NULL;
 }
 
-void* multiple_cameras_thread(void * ptr) {
+void* multiple_cameras_thread(void *ptr) {
   struct screen *screen = (struct screen *)ptr;
   AVCodecContext *c = screen->rtp_stream->codec;
   AVFrame *frame;
