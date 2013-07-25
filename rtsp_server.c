@@ -1,4 +1,6 @@
 #include "cameras.h"
+#include "screen.h"
+#include "file_reader.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -24,6 +26,8 @@
 #define PAUSE 6
 
 extern int should_terminate;
+extern l1 *screens;
+extern pthread_mutex_t screens_lock;
 
 static struct sockaddr_in address, client;
 static int socket_fd, connection_fd;
@@ -34,14 +38,13 @@ static int reads[MAX_CLIENTS];
 static char buffer[BUF_SIZE * MAX_CLIENTS];
 static int timeout = 5000;
 
+static int rtsp_session_find_func(void *value, void *arg);
 static void parse_command(char *buf, int len, int client_fd, int *close_conn);
 static void snd(int fd, char *buffer, int *close_conn);
 static void rtsp_server_loop();
 
-/*
 static l1 *sessions = NULL;
 static pthread_mutex_t sessions_lock;
-*/
 
 void* start_rtsp_server(void *ptr) {
   int flags, on = 1;
@@ -183,8 +186,10 @@ void rtsp_server_loop() {
 static void parse_command(char *buf, int len, int client_fd, int *close_conn) {
   char out[128];
   char *req = buf;
-  char *url, *sdp=NULL, *header;
-  char *transport, *session, *screen_id;
+  char *url, *sdp = NULL, *header;
+  char *transport = NULL, *session_id = NULL, *screen_id = NULL;
+  struct rtsp_session *session = NULL;
+  struct screen *screen = NULL;
   int method, CSeq = 0;
   int c, h = 0;
 
@@ -216,10 +221,20 @@ static void parse_command(char *buf, int len, int client_fd, int *close_conn) {
   while(*req != ' ') req += 1;
   *req = '\0';
 
-  screen_id = url;
+  if(strncasecmp(url, "rtsp://", 7) != 0) {
+    printf("bad url\n");
+  }
+
+  screen_id = url + 7;
+  while(*screen_id != '/') screen_id += 1;
+  screen_id += 1;
 
   printf("url: <%s>, screen_id: %s\n", url, screen_id);
 
+  screen = (struct screen *) l1_find(&screens, &screens_lock, &screen_find_func, screen_id);
+
+  if(screen == NULL)
+    printf("Screen not found\n");
 
   while(*req != '\n') req += 1;
   req += 1;
@@ -247,11 +262,19 @@ static void parse_command(char *buf, int len, int client_fd, int *close_conn) {
       if(h != 0) {
         header = buf + h;
         if(strncmp(header, "Transport:", 10) == 0) transport = header + 11;
-        if(strncmp(header, "Session:", 8) == 0) session =  header + 9;
+        if(strncmp(header, "Session:", 8) == 0) session_id =  header + 9;
       }
 
       h = c + 1;
     }
+  }
+
+  if(session_id != NULL) {
+    session = (struct rtsp_session *) l1_find(&sessions, &sessions_lock, &rtsp_session_find_func, session_id);
+    if(session == NULL)
+      printf("Session %s not found\n", session_id);
+    else
+      printf("Session %s found. Session screen: %s\n", session->session_id, session->screen->screen_id);
   }
 
   sprintf(out, "CSeq: %d\n", CSeq);
@@ -267,30 +290,51 @@ static void parse_command(char *buf, int len, int client_fd, int *close_conn) {
       snd(client_fd, out, close_conn);
       snd(client_fd, "Content-Type: application/sdp\n", close_conn);
 
-      if(strncasecmp(url, "rtsp://", 7) != 0) {
-        printf("bad url\n");
-      }
-      //find screen
-      //sdp = create_sdp(screen);
+      sdp = screen_create_sdp(screen);
       sprintf(out, "Content-Length: %d\n\n", strlen(sdp));
       snd(client_fd, out, close_conn);
       snd(client_fd, sdp, close_conn);
-      //free(sdp);
+      free(sdp);
       break;
     case SETUP:
-      snd(client_fd, "RTSP/1.0 200 OK\n", close_conn);
-      snd(client_fd, out, close_conn);
-      session = random_string(8);
-      sprintf(out, "Session: %s\n", session);
-      snd(client_fd, out, close_conn);
       if(strcmp(transport, "RTP/AVP;unicast;") != 0) {
         printf("Transport not supported\n");
       }
+
+      snd(client_fd, "RTSP/1.0 200 OK\n", close_conn);
+      snd(client_fd, out, close_conn);
+
+      session = (struct rtsp_session *)malloc(sizeof(struct rtsp_session));
+      session->session_id = random_string(8);
+      session->screen = screen;
+
+      l1_insert(&sessions, &sessions_lock, session);
+
+      sprintf(out, "Session: %s\n", session->session_id);
+      snd(client_fd, out, close_conn);
       snd(client_fd, "Transport: RTP/AVP;unicast;\n", close_conn);
-      free(session);
+
+      // select ports
+      /* multiple clients - ???
+        rtp_context = screen->rtp_context;
+        if((ret = avio_open(&(rtp_context->pb), rtp_context->filename, AVIO_FLAG_WRITE)) < 0) {
+          avformat_free_context(rtp_context);
+          av_err_msg("avio_open", ret);
+          return -1;
+        }
+      */
+
       break;
     case PLAY:
-      printf("Session = %s\n", session);
+      screen->active = 1;
+
+      if(screen->type == ARCHIVE) {
+        if(pthread_create(&screen->worker_thread, NULL, copy_input_to_output, screen->io) < 0)
+          error("pthread_create");
+      } else if(screen->tmpl_size > 1) {
+        if(pthread_create(&screen->worker_thread, NULL, multiple_cameras_thread, screen) < 0)
+          error("pthread_create");
+      }
       break;
   }
 }
@@ -303,26 +347,11 @@ static void snd(int fd, char *buffer, int *close_conn) {
   }
 }
 
-/* PLAY+SETUP
-  screen = (struct screen *) l1_find(&screens, &screens_lock, &find_screen_func, screen_id);
-
-  // all
-  rtp_context = screen->rtp_context;
-  if((ret = avio_open(&(rtp_context->pb), rtp_context->filename, AVIO_FLAG_WRITE)) < 0) {
-    avformat_free_context(rtp_context);
-    av_err_msg("avio_open", ret);
-    return -1;
-  }
-  screen->active = 1;
-
-  // file
-  pthread_t copy_input_to_output_thread;
-  if(pthread_create(&copy_input_to_output_thread, NULL, copy_input_to_output, io) < 0)
-    error("pthread_create");
-  if(pthread_detach(copy_input_to_output_thread) < 0)
-    error("pthread_detach");
-
-  // multiple
-  if(pthread_create(&screen->worker_thread, NULL, multiple_cameras_thread, screen) < 0)
-    error("pthread_create");
-*/
+static int rtsp_session_find_func(void *value, void *arg) {
+  struct rtsp_session *session = value;
+  char* session_id = (char *)arg;
+  if(strcpy(session->session_id, session_id) == 0)
+    return 1;
+  else
+    return 0;
+}

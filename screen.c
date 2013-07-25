@@ -2,13 +2,12 @@
 #include "file_reader.h"
 #include <libswscale/swscale.h>
 
-l1 *screens = NULL;
-pthread_mutex_t screens_lock;
-
 int screen_open_video_file(struct screen *screen);
-void* multiple_cameras_thread(void * ptr);
 static int init_single_camera_screen(struct screen *screen);
 static int init_multiple_camera_screen(struct screen *screen);
+
+l1 *screens = NULL;
+pthread_mutex_t screens_lock;
 
 int screen_init(struct screen *screen) {
   int ret;
@@ -52,6 +51,16 @@ int screen_init(struct screen *screen) {
 
   return 0;
 }
+
+int screen_find_func(void *value, void *arg) {
+  struct screen *screen = value;
+  char* screen_id = (char *)arg;
+  if(strcpy(screen->screen_id, screen_id) == 0)
+    return 1;
+  else
+    return 0;
+}
+
 
 int remove_screen_counsumers(void *value, void *arg) {
   struct cam_consumer *consumer = (struct cam_consumer *)value;
@@ -97,7 +106,7 @@ void screen_remove(struct screen *screen) {
   screen_destroy(screen);
 }
 
-static char* create_sdp(struct screen *screen) {
+char* screen_create_sdp(struct screen *screen) {
   char buff[2048];
   if(av_sdp_create(&screen->rtp_context, 1, buff, sizeof(buff)) < 0)
     return NULL;
@@ -207,9 +216,6 @@ static int init_multiple_camera_screen(struct screen *screen) {
 
   screen->rtp_context = rtp_context;
   screen->rtp_stream = rtp_stream;
-
-  if(create_sdp(screen) < 0)
-    return -1;
 
   if(pthread_mutex_init(&screen->combined_picture_lock, NULL) < 0) {
     fprintf(stderr, "pthread_mutex_init failed\n");

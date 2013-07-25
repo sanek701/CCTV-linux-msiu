@@ -62,15 +62,6 @@ static struct camera** get_cams_by_ids(int *cam_ids, int ncams) {
   return cams;
 }
 
-int find_screen_func(void *value, void *arg) {
-  struct screen *screen = value;
-  char* screen_id = (char *)arg;
-  if(strcpy(screen->screen_id, screen_id) == 0)
-    return 1;
-  else
-    return 0;
-}
-
 static void snd(int fd, char *buffer, int *close_conn) {
   int rc = send(fd, buffer, strlen(buffer), 0);
   if(rc < 0) {
@@ -157,7 +148,7 @@ static void parse_command(char *buf, int client_fd, int *close_conn) {
             screen->screen_id, screen->rtp_stream->codec->width,  screen->rtp_stream->codec->height);
         }
       } else {
-        screen = (struct screen *) l1_find(&screens, &screens_lock, &find_screen_func, screen_id);
+        screen = (struct screen *) l1_find(&screens, &screens_lock, &screen_find_func, screen_id);
         if(screen == NULL) {
           sprintf(buf, "{ \"error\": \"Screen not found\" }\n");
         } else {
