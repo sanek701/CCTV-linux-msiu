@@ -44,6 +44,7 @@ char* random_string(int len) {
     else
       str[i] = (char)((int)'a' + rand()%26);
   }
+  str[len] = '\0';
   return str;
 }
 
@@ -83,13 +84,10 @@ int main(int argc, char** argv) {
     exit(EXIT_FAILURE);
   }
 
-  /*
+  
   pthread_t rtsp_server_thread;
-  if(pthread_create(&rtsp_server_thread, NULL, start_rtsp_server, NULL) < 0)
+  if(pthread_create(&rtsp_server_thread, NULL, rtsp_server_start, NULL) < 0)
     error("pthread_create");
-  if(pthread_detach(rtsp_server_thread) < 0)
-    error("pthread_detach");
-  */
 
   pthread_t h264_to_mp4_thread;
   if(pthread_create(&h264_to_mp4_thread, NULL, start_h264_to_mp4_service, NULL) < 0)
@@ -113,6 +111,9 @@ int main(int argc, char** argv) {
   terminate_h264_to_mp4_service = 1;
   pthread_join(h264_to_mp4_thread, NULL);
   fprintf(stderr, "h264_to_mp4_thread shutted down\n");
+
+  pthread_join(rtsp_server_thread, NULL);
+  fprintf(stderr, "rtsp_server shutted down\n");
 
   free(cameras);
   free(threads);

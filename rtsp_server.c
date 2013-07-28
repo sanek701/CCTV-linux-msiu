@@ -16,7 +16,7 @@
 
 #define MAX_CLIENTS 10
 #define BUF_SIZE 1024
-#define SERVER_PORT 1554
+#define SERVER_PORT 8554
 
 #define OPTIONS 1
 #define DESCRIBE 2
@@ -46,7 +46,7 @@ static void rtsp_server_loop();
 static l1 *sessions = NULL;
 static pthread_mutex_t sessions_lock;
 
-void* start_rtsp_server(void *ptr) {
+void* rtsp_server_start(void *ptr) {
   int flags, on = 1;
   memset(&address, 0, address_length);
   memset(&fds, 0 , sizeof(fds));
@@ -145,7 +145,7 @@ void rtsp_server_loop() {
           for(j = rd, k = rc; k>0; k--, j++) {
             if(buf[j] == '\n')
               ns += 1;
-            else
+            else if(buf[j] != '\r')
               ns = 0;
             if(ns == 2) {
               rd += rc;
@@ -320,6 +320,11 @@ static void parse_command(char *buf, int len, int client_fd, int *close_conn) {
         if((ret = avio_open(&(rtp_context->pb), rtp_context->filename, AVIO_FLAG_WRITE)) < 0) {
           avformat_free_context(rtp_context);
           av_err_msg("avio_open", ret);
+          return -1;
+        }
+        if((ret = avformat_write_header(rtp_context, NULL)) < 0) {
+          avformat_free_context(rtp_context);
+          av_err_msg("avformat_write_header", ret);
           return -1;
         }
       */

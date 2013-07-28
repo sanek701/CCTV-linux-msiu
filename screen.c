@@ -142,12 +142,7 @@ static int init_rtp_stream(struct screen *screen, AVCodecContext *codec) {
     av_err_msg("avcodec_copy_context", ret);
     return -1;
   }
-  if((ret = avformat_write_header(rtp_context, NULL)) < 0) {
-    avformat_free_context(rtp_context);
-    av_err_msg("avformat_write_header", ret);
-    return -1;
-  }
-
+  
   screen->rtp_context = rtp_context;
   screen->rtp_stream = rtp_stream;
   return 0;

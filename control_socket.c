@@ -144,7 +144,7 @@ static void parse_command(char *buf, int client_fd, int *close_conn) {
         if(screen_init(screen) < 0) {
           sprintf(buf, "{ \"error\": \"Screen initialization failed\" }\n");
         } else {
-          sprintf(buf, "{ \"screen_id\": %s, \"width\": %d, \"height\": %d }\n",
+          sprintf(buf, "{ \"screen_id\": \"%s\", \"width\": %d, \"height\": %d }\n",
             screen->screen_id, screen->rtp_stream->codec->width,  screen->rtp_stream->codec->height);
         }
       } else {
@@ -159,7 +159,7 @@ static void parse_command(char *buf, int client_fd, int *close_conn) {
             if(screen_open_video_file(screen) < 0) {
               sprintf(buf, "{ \"error\": \"Moment not found\" }\n");
             } else {
-              sprintf(buf, "{ \"screen_id\": %s, \"width\": %d, \"height\": %d }\n",
+              sprintf(buf, "{ \"screen_id\": \"%s\", \"width\": %d, \"height\": %d }\n",
                 screen->screen_id, screen->rtp_stream->codec->width, screen->rtp_stream->codec->height);
             }
           }

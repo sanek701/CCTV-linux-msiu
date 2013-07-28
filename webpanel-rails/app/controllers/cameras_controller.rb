@@ -35,19 +35,19 @@ class CamerasController < InheritedResources::Base
     camera = Camera.find(params[:id])
     date = Date.parse(params[:date]).to_time
     position = params[:position].to_f * 24 * 60 * 60
-    session_id = params[:session_id].try(:to_i)
+    screen_id = params[:screen_id].try(:to_i)
     date += position.seconds
 
-    session_id = VIDEO_SERVER.show_archive(camera.id, date, session_id)
-    render json: { rtsp: "rtsp://#{request.host}:8554/stream_#{session_id}", session_id: session_id }
+    screen_id = VIDEO_SERVER.show_archive(camera.id, date, screen_id)
+    render json: { rtsp: "rtsp://#{request.host}:8554/#{screen_id}", screen_id: screen_id }
   end
 
   def watch
     template = params[:template].to_i
     cameras = Camera.find(params[:ids].split(','))
 
-    @session_id = VIDEO_SERVER.show_real_image(template, cameras)
-    @rtsp_link = "rtsp://#{request.host}:8554/stream_#{@session_id}"
+    @screen_id = VIDEO_SERVER.show_real_image(template, cameras)
+    @rtsp_link = "rtsp://#{request.host}:8554/#{@screen_id}"
   end
 
   def select

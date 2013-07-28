@@ -1,5 +1,5 @@
 jQuery ->
-  $session_id = undefined
+  $screen_id = undefined
   $vlc = document.getElementById("vlc")
 
   check_cam_cnt = ->
@@ -94,12 +94,12 @@ jQuery ->
       url: that.data('seek-url'),
       type: "GET",
       dataType: 'json',
-      data: { date: that.data('date'), position: that.data('position'), session_id: $session_id },
+      data: { date: that.data('date'), position: that.data('position'), screen_id: $screen_id },
       success: (data)->
-        if data.session_id == $session_id
+        if data.screen_id == $screen_id
           return
         else
-          $session_id = data.session_id
+          $screen_id = data.screen_id
           id = $vlc.playlist.add(data.rtsp, "");
           $vlc.playlist.playItem(id)
     }

@@ -101,3 +101,4 @@ char* random_string(int len);
 void* recorder_thread(void *ptr);
 void* start_h264_to_mp4_service(void *ptr);
 AVStream* init_h264_read_ctx(AVFormatContext *s, struct camera *cam);
+void* rtsp_server_start(void *ptr);
