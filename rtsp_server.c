@@ -1,60 +1,75 @@
-#include "cameras.h"
-#include "screen.h"
-#include "file_reader.h"
-
-#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
-#include <unistd.h>
+#include <time.h>
 #include <netinet/in.h>
-#include <sys/poll.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <libavformat/avformat.h>
+#include <libavutil/avstring.h>
+#include "camera.h"
+#include "event_loop.h"
+#include "file_reader.h"
+#include "screen.h"
+#include "string_utils.h"
 
-#define MAX_CLIENTS 10
-#define BUF_SIZE 1024
 #define SERVER_PORT 8554
 
-#define OPTIONS 1
-#define DESCRIBE 2
-#define SETUP 3
-#define TEARDOWN 4
-#define PLAY 5
-#define PAUSE 6
+enum RTSPStatusCode {
+  RTSP_STATUS_OK              =200, /**< OK */
+  RTSP_STATUS_METHOD          =405, /**< Method Not Allowed */
+  RTSP_STATUS_BANDWIDTH       =453, /**< Not Enough Bandwidth */
+  RTSP_STATUS_SESSION         =454, /**< Session Not Found */
+  RTSP_STATUS_STATE           =455, /**< Method Not Valid in This State */
+  RTSP_STATUS_AGGREGATE       =459, /**< Aggregate operation not allowed */
+  RTSP_STATUS_ONLY_AGGREGATE  =460, /**< Only aggregate operation allowed */
+  RTSP_STATUS_TRANSPORT       =461, /**< Unsupported transport */
+  RTSP_STATUS_INTERNAL        =500, /**< Internal Server Error */
+  RTSP_STATUS_SERVICE         =503, /**< Service Unavailable */
+  RTSP_STATUS_VERSION         =505, /**< RTSP Version not supported */
+};
 
-extern int should_terminate;
+enum RTSPMethod {
+  DESCRIBE,
+  ANNOUNCE,
+  OPTIONS,
+  SETUP,
+  PLAY,
+  PAUSE,
+  TEARDOWN,
+  GET_PARAMETER,
+  SET_PARAMETER,
+  REDIRECT,
+  RECORD,
+  UNKNOWN = -1,
+};
+
+struct rtsp_session {
+  char *session_id;
+  struct screen *screen;
+};
+
+extern int rtsp_server_fd;
 extern l1 *screens;
 extern pthread_mutex_t screens_lock;
 
-static struct sockaddr_in address, client;
-static int socket_fd, connection_fd;
-static socklen_t address_length;
-static struct pollfd fds[MAX_CLIENTS + 1];
-static int nfds = 1, rc;
-static int reads[MAX_CLIENTS];
-static char buffer[BUF_SIZE * MAX_CLIENTS];
-static int timeout = 5000;
-
-static int rtsp_session_find_func(void *value, void *arg);
-static void parse_command(char *buf, int len, int client_fd, int *close_conn);
-static void snd(int fd, char *buffer, int *close_conn);
-static void rtsp_server_loop();
+static int  rtsp_session_find_func(void *value, void *arg);
+static void rtsp_reply_header(struct client *client, int CSeq, enum RTSPStatusCode error_number);
+static void rtsp_reply_error(struct client *client, int CSeq, enum RTSPStatusCode error_number);
 
 static l1 *sessions = NULL;
 static pthread_mutex_t sessions_lock;
 
-void* rtsp_server_start(void *ptr) {
-  int flags, on = 1;
+void rtsp_server_start() {
+  int socket_fd, flags, on = 1;
+  struct sockaddr_in address;
+  int address_length = sizeof(struct sockaddr_in);
+
   memset(&address, 0, address_length);
-  memset(&fds, 0 , sizeof(fds));
-  memset(&reads, 0 , sizeof(int) * MAX_CLIENTS);
   address.sin_family = AF_INET;
   address.sin_addr.s_addr = htonl(INADDR_ANY);
   address.sin_port = htons(SERVER_PORT);
-  address_length = sizeof(struct sockaddr_in);
 
   if((socket_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
     error("socket");
@@ -69,240 +84,182 @@ void* rtsp_server_start(void *ptr) {
   if(listen(socket_fd, 5) < 0)
     error("listen");
 
-  rtsp_server_loop();
-  return NULL;
+  rtsp_server_fd = socket_fd;
 }
 
-void rtsp_server_loop() {
-  int current_size, close_conn, compress_array = 0;
-  int i,j,k,ns,rd,flags;
-  char *buf;
+void parse_rtsp_request(struct client* client) {
+  const char *p = client->buffer, *p1, *p2;
+  char cmd[32];
+  char url[256];
+  char path1[128];
+  char protocol[32];
+  char screen_id[16];
+  char session_id[64];
+  char transport_protocol[16];
+  char lower_transport[16];
+  char profile[16];
+  char parameter[16];
+  char line[1024];
+  const char *l;
+  char *path = path1;
 
-  address_length = sizeof(struct sockaddr_in);
-  fds[0].fd = socket_fd;
-  fds[0].events = POLLIN;
+  int client_port_min=0, client_port_max=0;
+  int method, CSeq = 0;
+  int ret;
+  int len;
 
-  while(!should_terminate) {
-    if((rc = poll(fds, nfds, timeout)) < 0) {
-      if(errno == EINTR) continue;
-      else error("poll");
-    }
-    current_size = nfds;
-    for (i = 0; i < current_size; i++) {
-      if(fds[i].revents == 0)
-        continue;
-      if(fds[i].revents != POLLIN) {
-        fprintf(stderr, "Error! revents = %d\n", fds[i].revents);
-      }
-
-      if(fds[i].fd == socket_fd) {
-
-        do {
-          if((connection_fd = accept(socket_fd, (struct sockaddr *)&client, &address_length)) < 0) {
-            if(errno == EINTR) continue;
-            if(errno != EWOULDBLOCK)
-              perror("accept");
-            break;
-          }
-          fprintf(stderr, "New incoming RTSP connection - %d\n", connection_fd);
-          if((flags = fcntl(connection_fd, F_GETFL, 0)) < 0)
-            error("fcntl");
-          if(fcntl(connection_fd, F_SETFL, flags | O_NONBLOCK) < 0)
-            error("fcntl");
-          fds[nfds].fd = connection_fd;
-          fds[nfds].events = POLLIN;
-          nfds++;
-        } while(connection_fd >= 0);
-
-      } else {
-
-        close_conn = 0;
-        do {
-          rd = reads[i-1];
-          buf = buffer + (i-1) * BUF_SIZE;
-          rc = recv(fds[i].fd, buf + rd, BUF_SIZE - rd, 0);
-          if(rc < 0) {
-            if(errno == EINTR) continue;
-            if(errno != EWOULDBLOCK) {
-              perror("recv");
-              close_conn = 1;
-            }
-            break;
-          }
-
-          if(rc == 0) {
-            close_conn = 1;
-            break;
-          }
-
-          ns = 0;
-
-          if(rd > 0 && buf[rd-1] == '\n')
-            ns += 1;
-
-          reads[i-1] += rc;
-
-          for(j = rd, k = rc; k>0; k--, j++) {
-            if(buf[j] == '\n')
-              ns += 1;
-            else if(buf[j] != '\r')
-              ns = 0;
-            if(ns == 2) {
-              rd += rc;
-              buf[rd] = '\0';
-
-              reads[i-1] = 0;
-              parse_command(buf, rd, fds[i].fd, &close_conn);
-              break;
-            }
-          }
-          
-          if(close_conn) break;
-        } while(rc > 0);
-
-        if(close_conn) {
-          printf("Closing connection - %d\n", fds[i].fd);
-          close(fds[i].fd);
-          fds[i].fd = -1;
-          compress_array = 1;
-        }
-      }
-    }
-
-    if(compress_array) {
-      for (i = 0; i < nfds; i++) {
-        if (fds[i].fd == -1) {
-          for(j = i; j < nfds; j++) {
-            fds[j].fd = fds[j+1].fd;
-          }
-          nfds--;
-        }
-      }
-      compress_array = 0;
-    }
-  }
-}
-
-static void parse_command(char *buf, int len, int client_fd, int *close_conn) {
   char out[128];
-  char *req = buf;
-  char *url, *sdp = NULL, *header;
-  char *transport = NULL, *session_id = NULL, *screen_id = NULL;
+  char *sdp = NULL;
   struct rtsp_session *session = NULL;
   struct screen *screen = NULL;
-  int method, CSeq = 0;
-  int c, h = 0;
 
   printf("------->\n");
-  printf("%s", buf);
+  printf("%s", client->buffer);
   printf("<-------\n");
 
-  if(strncasecmp(req, "OPTIONS", 7) == 0) {
-    method = OPTIONS; req += 7;
-  } else if(strncasecmp(req, "DESCRIBE", 8) == 0) {
-    method = DESCRIBE; req += 8;
-  } else if(strncasecmp(req, "SETUP", 5) == 0) {
-    method = SETUP; req += 5;
-  } else if(strncasecmp(req, "TEARDOWN", 8) == 0) {
-    method = TEARDOWN; req += 8;
-  } else if(strncasecmp(req, "PLAY", 4) == 0) {
-    method = PLAY; req += 4;
-  } else if(strncasecmp(req, "PAUSE", 5) == 0) {
-    method = PAUSE; req += 5;
-  } else {
-    printf("BAD request 511\n");
-  }
+  get_word(cmd, sizeof(cmd), &p);
+  get_word(url, sizeof(url), &p);
+  get_word(protocol, sizeof(protocol), &p);
 
-  printf("method: %d\n", method);
+  if (strcmp(protocol, "RTSP/1.0") != 0)
+    rtsp_reply_error(client, CSeq, RTSP_STATUS_VERSION);
 
-  while(*req == ' ') req += 1;
-  url = req;
+  session_id[0] = '\0';
+  transport_protocol[0] = '\0';
+  lower_transport[0] = '\0';
 
-  while(*req != ' ') req += 1;
-  *req = '\0';
+  /* parse each header line */
+  /* skip to next line */
+  while (*p != '\n' && *p != '\0')
+    p++;
+  if (*p == '\n')
+    p++;
+  while (*p != '\0') {
+    p1 = memchr(p, '\n', client->buffer - p);
+    if (!p1)
+      break;
+    p2 = p1;
+    if (p2 > p && p2[-1] == '\r')
+      p2--;
+    /* skip empty line */
+    if (p2 == p)
+      break;
+    len = p2 - p;
+    if (len > sizeof(line) - 1)
+      len = sizeof(line) - 1;
+    memcpy(line, p, len);
+    line[len] = '\0';
+    l = (const char *)line;
 
-  if(strncasecmp(url, "rtsp://", 7) != 0) {
-    printf("bad url\n");
-  }
-
-  screen_id = url + 7;
-  while(*screen_id != '/') screen_id += 1;
-  screen_id += 1;
-
-  printf("url: <%s>, screen_id: %s\n", url, screen_id);
-
-  screen = (struct screen *) l1_find(&screens, &screens_lock, &screen_find_func, screen_id);
-
-  if(screen == NULL)
-    printf("Screen not found\n");
-
-  while(*req != '\n') req += 1;
-  req += 1;
-
-  if(strncasecmp(req, "CSeq: ", 6) == 0) {
-    req += 6;
-    while(*req >= '0' && *req <= '9') {
-      CSeq *= 10;
-      CSeq += (int)(*req) - (int)'0';
-      req += 1;
+    if(av_stristart(l, "Session:", &l)) {
+      get_word_sep(session_id, sizeof(session_id), ";", &l);
+    } else if (av_stristart(l, "Transport:", &l)) {
+      printf("Got transport: <%s>\n", l);
+      get_word_sep(transport_protocol, sizeof(transport_protocol), "/", &l);
+      get_word_sep(profile, sizeof(profile), "/;,", &l);
+      lower_transport[0] = '\0';
+      if(*l == '/')
+        get_word_sep(lower_transport, sizeof(lower_transport), ";,", &l);
+    } else if (av_stristart(l, "CSeq:", &l)) {
+      CSeq = strtol(l, NULL, 10);
     }
-  } else {
-    printf("NO CSeq!\n");
-  }
-
-  printf("CSeq: %d\n", CSeq);
-
-  while(*req != '\n') req += 1;
-  req += 1;
-
-  for(c = 0; c < len; c++) {
-    if(buf[c] == '\n') {
-      buf[c] = '\0';
-
-      if(h != 0) {
-        header = buf + h;
-        if(strncmp(header, "Transport:", 10) == 0) transport = header + 11;
-        if(strncmp(header, "Session:", 8) == 0) session_id =  header + 9;
+    while (*l != '\0' && *l != ',') {
+      get_word_sep(parameter, sizeof(parameter), "=;,", &l);
+      if (!strcmp(parameter, "client_port")) {
+        if (*l == '=') {
+          l += 1;
+          parse_range(&client_port_min, &client_port_max, &l);
+        }
       }
+    }
 
-      h = c + 1;
+    p = p1 + 1;
+  }
+
+  screen_id[0] = '\0';
+  av_url_split(NULL, 0, NULL, 0, NULL, 0, NULL, path, sizeof(path1), url);
+  if(*path == '/') {
+    path++;
+    get_word_sep(screen_id, sizeof(screen_id), "/?", (const char **)&path);
+  }
+
+  printf("url: <%s>, path: <%s>, screen_id: <%s>\n", url, path1, screen_id);
+  printf("transport_protocol: <%s>, lower_transport: <%s> client_port: %d-%d\n",
+    transport_protocol, lower_transport, client_port_min, client_port_max);
+
+
+  if(screen_id[0] != '\0') {
+    screen = (struct screen *) l1_find(&screens, &screens_lock, &screen_find_func, screen_id);
+    if(screen == NULL) {
+      printf("Screen not found\n");
+      rtsp_reply_error(client, CSeq, RTSP_STATUS_SERVICE);
+      return;
     }
   }
 
-  if(session_id != NULL) {
+/*
+  if(av_strcasecmp(transport_protocol, "RTP") != 0 ||
+     av_strcasecmp(lower_transport, "UDP") != 0 ) {
+    rtsp_reply_error(client, CSeq, RTSP_STATUS_TRANSPORT);
+    return;
+  }
+*/
+
+  if(session_id[0] != '\0') {
     session = (struct rtsp_session *) l1_find(&sessions, &sessions_lock, &rtsp_session_find_func, session_id);
     if(session == NULL)
-      printf("Session %s not found\n", session_id);
+      printf("Session <%s> not found\n", session_id);
     else
-      printf("Session %s found. Session screen: %s\n", session->session_id, session->screen->screen_id);
+      printf("Session <%s> found. Session screen: <%s>\n", session->session_id, session->screen->screen_id);
   }
 
-  sprintf(out, "CSeq: %d\n", CSeq);
+  if (!strcmp(cmd, "DESCRIBE"))
+    method = DESCRIBE;
+  else if (!strcmp(cmd, "OPTIONS"))
+    method = OPTIONS;
+  else if (!strcmp(cmd, "SETUP"))
+    method = SETUP;
+  else if (!strcmp(cmd, "PLAY"))
+    method = PLAY;
+  else if (!strcmp(cmd, "PAUSE"))
+    method = PAUSE;
+  else if (!strcmp(cmd, "TEARDOWN"))
+    method = TEARDOWN;
+  else {
+    rtsp_reply_error(client, CSeq, RTSP_STATUS_METHOD);
+    return;
+  }
 
   switch(method) {
     case OPTIONS:
-      snd(client_fd, "RTSP/1.0 200 OK\n", close_conn);
-      snd(client_fd, out, close_conn);
-      snd(client_fd, "Public: OPTIONS, DESCRIBE, SETUP, TEARDOWN, PLAY, PAUSE\n\n", close_conn);
+      rtsp_reply_header(client, CSeq, RTSP_STATUS_OK);
+      snd(client, "Public: OPTIONS, DESCRIBE, SETUP, TEARDOWN, PLAY, PAUSE\r\n");
+      snd(client, "\r\n");
       break;
+
     case DESCRIBE:
-      snd(client_fd, "RTSP/1.0 200 OK\n", close_conn);
-      snd(client_fd, out, close_conn);
-      snd(client_fd, "Content-Type: application/sdp\n", close_conn);
+      rtsp_reply_header(client, CSeq, RTSP_STATUS_OK);
+      sprintf(out, "Content-Base: %s\r\n", url);
+      snd(client, out);
+      snd(client, "Content-Type: application/sdp\r\n");
 
       sdp = screen_create_sdp(screen);
-      sprintf(out, "Content-Length: %d\n\n", strlen(sdp));
-      snd(client_fd, out, close_conn);
-      snd(client_fd, sdp, close_conn);
+
+      sprintf(out, "Content-Length: %d\r\n", strlen(sdp));
+      snd(client, out);
+      snd(client, "\r\n");
+      snd(client, sdp);
       free(sdp);
       break;
-    case SETUP:
-      if(strcmp(transport, "RTP/AVP;unicast;") != 0) {
-        printf("Transport not supported\n");
-      }
 
-      snd(client_fd, "RTSP/1.0 200 OK\n", close_conn);
-      snd(client_fd, out, close_conn);
+    case SETUP:
+      sprintf(screen->rtp_context->filename, "rtp://%s:%d", "localhost", client_port_min);
+
+      if((ret = avio_open(&(screen->rtp_context->pb), screen->rtp_context->filename, AVIO_FLAG_WRITE)) < 0) {
+        avformat_free_context(screen->rtp_context);
+        av_err_msg("avio_open", ret);
+        return;
+      }
 
       session = (struct rtsp_session *)malloc(sizeof(struct rtsp_session));
       session->session_id = random_string(8);
@@ -310,27 +267,21 @@ static void parse_command(char *buf, int len, int client_fd, int *close_conn) {
 
       l1_insert(&sessions, &sessions_lock, session);
 
-      sprintf(out, "Session: %s\n", session->session_id);
-      snd(client_fd, out, close_conn);
-      snd(client_fd, "Transport: RTP/AVP;unicast;\n", close_conn);
-
-      // select ports
-      /* multiple clients - ???
-        rtp_context = screen->rtp_context;
-        if((ret = avio_open(&(rtp_context->pb), rtp_context->filename, AVIO_FLAG_WRITE)) < 0) {
-          avformat_free_context(rtp_context);
-          av_err_msg("avio_open", ret);
-          return -1;
-        }
-        if((ret = avformat_write_header(rtp_context, NULL)) < 0) {
-          avformat_free_context(rtp_context);
-          av_err_msg("avformat_write_header", ret);
-          return -1;
-        }
-      */
-
+      rtsp_reply_header(client, CSeq, RTSP_STATUS_OK);
+      sprintf(out, "Session: %s\r\n", session->session_id);
+      snd(client, out);
+      sprintf(out, "Transport: RTP/AVP/UDP;unicast;client_port=%d-%d\r\n", client_port_min, client_port_max);
+      snd(client, out);
+      snd(client, "\r\n");
       break;
+
     case PLAY:
+      if((ret = avformat_write_header(screen->rtp_context, NULL)) < 0) {
+        avformat_free_context(screen->rtp_context);
+        av_err_msg("avformat_write_header", ret);
+        return;
+      }
+
       screen->active = 1;
 
       if(screen->type == ARCHIVE) {
@@ -340,15 +291,13 @@ static void parse_command(char *buf, int len, int client_fd, int *close_conn) {
         if(pthread_create(&screen->worker_thread, NULL, multiple_cameras_thread, screen) < 0)
           error("pthread_create");
       }
-      break;
-  }
-}
 
-static void snd(int fd, char *buffer, int *close_conn) {
-  int rc = send(fd, buffer, strlen(buffer), 0);
-  if(rc < 0) {
-    perror("send");
-    *close_conn = 1;
+      rtsp_reply_header(client, CSeq, RTSP_STATUS_OK);
+      break;
+
+    case TEARDOWN:
+
+      break;
   }
 }
 
@@ -359,4 +308,56 @@ static int rtsp_session_find_func(void *value, void *arg) {
     return 1;
   else
     return 0;
+}
+
+static void rtsp_reply_header(struct client *client, int CSeq, enum RTSPStatusCode error_number) {
+  const char *str;
+  time_t ti;
+  struct tm *tm;
+  char out[128];
+  char buf2[32];
+
+  switch(error_number) {
+  case RTSP_STATUS_OK:
+    str = "OK";
+    break;
+  case RTSP_STATUS_METHOD:
+    str = "Method Not Allowed";
+    break;
+  case RTSP_STATUS_SESSION:
+    str = "Session Not Found";
+    break;
+  case RTSP_STATUS_STATE:
+    str = "Method Not Valid in This State";
+    break;
+  case RTSP_STATUS_TRANSPORT:
+    str = "Unsupported transport";
+    break;
+  case RTSP_STATUS_INTERNAL:
+    str = "Internal Server Error";
+    break;
+  case RTSP_STATUS_VERSION:
+    str = "RTSP Version not supported";
+    break;
+  default:
+    str = "Unknown Error";
+    break;
+  }
+
+  sprintf(out, "RTSP/1.0 %d %s\r\n", error_number, str);
+  snd(client, out);
+  sprintf(out, "CSeq: %d\r\n", CSeq);
+  snd(client, out);
+
+  /* output GMT time */
+  ti = time(NULL);
+  tm = gmtime(&ti);
+  strftime(buf2, sizeof(buf2), "%a, %d %b %Y %H:%M:%S", tm);
+  sprintf(out, "Date: %s GMT\r\n", buf2);
+  snd(client, out);
+}
+
+static void rtsp_reply_error(struct client *client, int CSeq, enum RTSPStatusCode error_number) {
+  rtsp_reply_header(client, CSeq, error_number);
+  snd(client, "\r\n");
 }

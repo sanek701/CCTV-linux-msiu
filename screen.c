@@ -1,5 +1,6 @@
-#include "cameras.h"
+#include "camera.h"
 #include "file_reader.h"
+#include "screen.h"
 #include <libswscale/swscale.h>
 
 int screen_open_video_file(struct screen *screen);
@@ -55,7 +56,7 @@ int screen_init(struct screen *screen) {
 int screen_find_func(void *value, void *arg) {
   struct screen *screen = value;
   char* screen_id = (char *)arg;
-  if(strcpy(screen->screen_id, screen_id) == 0)
+  if(strcmp(screen->screen_id, screen_id) == 0)
     return 1;
   else
     return 0;

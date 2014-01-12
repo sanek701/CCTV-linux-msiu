@@ -2,9 +2,9 @@
 #include <errno.h>
 #include <strings.h>
 #include <signal.h>
-#include "cameras.h"
+#include "camera.h"
+#include "event_loop.h"
 #include "screen.h"
-#include "control_socket.h"
 
 struct camera *cameras = NULL;
 int n_cameras = 0;
@@ -54,9 +54,6 @@ int main(int argc, char** argv) {
     exit(EXIT_FAILURE);
   }
 
-  control_socket_init();
-  fprintf(stderr, "Control socket initialized\n");
-
   signal(SIGINT, terminate);
 
   //av_log_set_level(AV_LOG_DEBUG);
@@ -84,16 +81,14 @@ int main(int argc, char** argv) {
     exit(EXIT_FAILURE);
   }
 
+  info_server_start();
+  rtsp_server_start();
   
-  pthread_t rtsp_server_thread;
-  if(pthread_create(&rtsp_server_thread, NULL, rtsp_server_start, NULL) < 0)
-    error("pthread_create");
-
   pthread_t h264_to_mp4_thread;
   if(pthread_create(&h264_to_mp4_thread, NULL, start_h264_to_mp4_service, NULL) < 0)
     error("pthread_create");
 
-  control_socket_loop();
+  event_loop();
 
   struct screen *screen;
   while((screen = (struct screen *)l1_shift(&screens, &screens_lock)) != NULL) {
@@ -112,15 +107,12 @@ int main(int argc, char** argv) {
   pthread_join(h264_to_mp4_thread, NULL);
   fprintf(stderr, "h264_to_mp4_thread shutted down\n");
 
-  pthread_join(rtsp_server_thread, NULL);
-  fprintf(stderr, "rtsp_server shutted down\n");
-
   free(cameras);
   free(threads);
 
   avformat_network_deinit();
   db_close_pg_conn();
-  control_socket_close();
+  event_loop_stop();
 
   fprintf(stderr, "Terminated.\n");
   return (EXIT_SUCCESS);

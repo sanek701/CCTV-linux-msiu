@@ -1,3 +1,5 @@
+#include <time.h>
+
 void db_init_pg_conn(const char *conf_file);
 void db_close_pg_conn();
 struct camera* db_select_cameras(int *ncams);

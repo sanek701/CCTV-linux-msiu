@@ -1,5 +1,5 @@
 #include <unistd.h>
-#include "cameras.h"
+#include "camera.h"
 #include "screen.h"
 
 int terminate_h264_to_mp4_service = 0;

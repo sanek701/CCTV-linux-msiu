@@ -67,38 +67,11 @@ struct in_out_cpy {
   struct screen *screen;
 };
 
-struct screen {
-  int type;
-  int ncams;
-  int tmpl_size;
-  int active;
-  char *screen_id;
-  struct camera **cams;
-  time_t timestamp;
-  AVFormatContext *rtp_context;
-  AVStream *rtp_stream;
-  AVPicture combined_picture;
-  pthread_t worker_thread;
-  pthread_mutex_t combined_picture_lock;
-  struct in_out_cpy *io;
-};
-
-struct cam_consumer {
-  struct screen *screen;
-  int position;
-  AVPicture picture;
-  struct SwsContext *sws_context;
-};
-
-struct rtsp_session {
-  char *session_id;
-  struct screen *screen;
-};
-
 void  error(const char *msg);
 void  av_err_msg(char *msg, int errnum);
 char* random_string(int len);
 void* recorder_thread(void *ptr);
 void* start_h264_to_mp4_service(void *ptr);
 AVStream* init_h264_read_ctx(AVFormatContext *s, struct camera *cam);
-void* rtsp_server_start(void *ptr);
+void rtsp_server_start();
+void info_server_start();

@@ -1,11 +1,13 @@
 #include <fcntl.h>
 #include <unistd.h>
+#include <netinet/in.h>
 #include <sys/poll.h>
 #include <sys/socket.h>
 #include <sys/statvfs.h>
 #include <sys/types.h>
 #include <sys/un.h>
-#include "cameras.h"
+#include "camera.h"
+#include "event_loop.h"
 #include "screen.h"
 #include "json.h"
 
@@ -15,35 +17,35 @@
 extern struct camera *cameras;
 extern int n_cameras;
 extern int should_terminate;
+extern int info_server_fd;
 extern char *store_dir;
 extern l1 *screens;
 extern pthread_mutex_t screens_lock;
 
-static struct sockaddr_un address, client;
-static int socket_fd, connection_fd;
-static socklen_t address_length;
-static struct pollfd fds[MAX_CLIENTS + 1];
-static int nfds = 1, rc;
-static int timeout = 5000;
-static int reads[MAX_CLIENTS];
-static char buffer[BUF_SIZE * MAX_CLIENTS];
+void info_server_start() {
+  int socket_fd, flags, on = 1;
+  struct sockaddr_un address;
+  int address_length;
 
-static time_t last_disk_space_check = 0;
+  address.sun_family = AF_UNIX;
+  strcpy(address.sun_path, "/tmp/videoserver");
+  unlink(address.sun_path);
+  address_length = strlen(address.sun_path) + sizeof(address.sun_family);
 
-static void check_disk_space() {
-  struct statvfs statvfs_buf;
-  unsigned long long avail;
-  if(statvfs(store_dir, &statvfs_buf) < 0) {
-    perror("statvfs");
-    return;
-  }
-  
-  while((avail = (unsigned long long)statvfs_buf.f_bsize * statvfs_buf.f_bavail) < (unsigned long long)1024 * 1024 * 1024) {
-    if(!db_unlink_oldest_file()) {
-      fprintf(stderr, "Few disk space left, but nothing to delete.\n");
-      break;
-    }
-  }
+  if((socket_fd = socket(PF_UNIX, SOCK_STREAM, 0)) < 0)
+    error("socket");
+  if(setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, (char *)&on, sizeof(on)) < 0)
+    error("setsockopt");
+  if((flags = fcntl(socket_fd, F_GETFL, 0)) < 0)
+    error("fcntl");
+  if(fcntl(socket_fd, F_SETFL, flags | O_NONBLOCK) < 0)
+    error("fcntl");
+  if(bind(socket_fd, (struct sockaddr *)&address, address_length) < 0)
+    error("bind");
+  if(listen(socket_fd, 5) < 0)
+    error("listen");
+
+  info_server_fd = socket_fd;
 }
 
 static struct camera** get_cams_by_ids(int *cam_ids, int ncams) {
@@ -62,15 +64,7 @@ static struct camera** get_cams_by_ids(int *cam_ids, int ncams) {
   return cams;
 }
 
-static void snd(int fd, char *buffer, int *close_conn) {
-  int rc = send(fd, buffer, strlen(buffer), 0);
-  if(rc < 0) {
-    perror("send");
-    *close_conn = 1;
-  }
-}
-
-static void parse_command(char *buf, int client_fd, int *close_conn) {
+void parse_info_request(struct client *client, char *buf) {
   json_settings settings;
   char error[256];
   int i, j;
@@ -191,155 +185,10 @@ static void parse_command(char *buf, int client_fd, int *close_conn) {
       break;
   }
 
-  snd(client_fd, buf, close_conn);
+  snd(client, buf);
 
   if(cam_ids != NULL)
     free(cam_ids);
   if(screen_id != NULL)
     free(screen_id);
-}
-
-void control_socket_init() {
-  int flags, on = 1;
-  memset(&address, 0, address_length);
-  memset(&fds, 0 , sizeof(fds));
-  memset(&reads, 0 , sizeof(int) * MAX_CLIENTS);
-  address.sun_family = AF_UNIX;
-  strcpy(address.sun_path, "/tmp/videoserver");
-  unlink(address.sun_path);
-  address_length = strlen(address.sun_path) + sizeof(address.sun_family);
-
-  if((socket_fd = socket(PF_UNIX, SOCK_STREAM, 0)) < 0)
-    error("socket");
-  if(setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, (char *)&on, sizeof(on)) < 0)
-    error("setsockopt");
-  if((flags = fcntl(socket_fd, F_GETFL, 0)) < 0)
-    error("fcntl");
-  if(fcntl(socket_fd, F_SETFL, flags | O_NONBLOCK) < 0)
-    error("fcntl");
-  if(bind(socket_fd, (struct sockaddr *)&address, address_length) < 0)
-    error("bind");
-  if(listen(socket_fd, 5) < 0)
-    error("listen"); 
-}
-
-void control_socket_loop() {
-  int current_size, close_conn, compress_array = 0;
-  int i,j,k,ns,rd,flags;
-  char *buf;
-
-  address_length = sizeof(struct sockaddr_un);
-  fds[0].fd = socket_fd;
-  fds[0].events = POLLIN;
-
-  while(!should_terminate) {
-    if(time(NULL) - last_disk_space_check > 60) {
-      check_disk_space();
-      last_disk_space_check = time(NULL);
-    }
-
-    if((rc = poll(fds, nfds, timeout)) < 0) {
-      if(errno == EINTR) continue;
-      else error("poll");
-    }
-    current_size = nfds;
-    for (i = 0; i < current_size; i++) {
-      if(fds[i].revents == 0)
-        continue;
-      if(fds[i].revents != POLLIN) {
-        fprintf(stderr, "Error! revents = %d\n", fds[i].revents);
-      }
-
-      if(fds[i].fd == socket_fd) {
-
-        do {
-          if((connection_fd = accept(socket_fd, (struct sockaddr *)&client, &address_length)) < 0) {
-            if(errno == EINTR) continue;
-            if(errno != EWOULDBLOCK)
-              perror("accept");
-            break;
-          }
-          fprintf(stderr, "New incoming connection - %d\n", connection_fd);
-          if((flags = fcntl(connection_fd, F_GETFL, 0)) < 0)
-            error("fcntl");
-          if(fcntl(connection_fd, F_SETFL, flags | O_NONBLOCK) < 0)
-            error("fcntl");
-          fds[nfds].fd = connection_fd;
-          fds[nfds].events = POLLIN;
-          nfds++;
-        } while(connection_fd >= 0);
-
-      } else {
-
-        close_conn = 0;
-        do {
-          rd = reads[i-1];
-          buf = buffer + (i-1) * BUF_SIZE;
-          rc = recv(fds[i].fd, buf + rd, BUF_SIZE - rd, 0);
-          if(rc < 0) {
-            if(errno == EINTR) continue;
-            if(errno != EWOULDBLOCK) {
-              perror("recv");
-              close_conn = 1;
-            }
-            break;
-          }
-
-          if(rc == 0) {
-            close_conn = 1;
-            break;
-          }
-
-          ns = 0;
-
-          if(rd > 0 && buf[rd-1] == '\n')
-            ns += 1;
-
-          reads[i-1] += rc;
-
-          for(j = rd, k = rc; k>0; k--, j++) {
-            if(buf[j] == '\n')
-              ns += 1;
-            else
-              ns = 0;
-            if(ns == 2) {
-              buf[rd + rc] = '\0';
-              reads[i-1] = 0;
-              parse_command(buf, fds[i].fd, &close_conn);
-              break;
-            }
-          }
-          
-          if(close_conn) break;
-        } while(rc > 0);
-
-        if(close_conn) {
-          printf("Closing connection - %d\n", fds[i].fd);
-          close(fds[i].fd);
-          fds[i].fd = -1;
-          compress_array = 1;
-        }
-      }
-    }
-
-    if(compress_array) {
-      for (i = 0; i < nfds; i++) {
-        if (fds[i].fd == -1) {
-          for(j = i; j < nfds; j++) {
-            fds[j].fd = fds[j+1].fd;
-          }
-          nfds--;
-        }
-      }
-      compress_array = 0;
-    }
-  }
-}
-
-void control_socket_close() {
-  int i;
-  for (i = 0; i < nfds; i++) {
-    if(fds[i].fd >= 0)
-      close(fds[i].fd);
-  }
 }

@@ -1,4 +1,4 @@
-#include "cameras.h"
+#include "camera.h"
 #include <unistd.h>
 #include <strings.h>
 #include <libpq-fe.h>

@@ -1,7 +1,8 @@
 #include <highgui.h>
 #include <libswscale/swscale.h>
-#include "cameras.h"
+#include "camera.h"
 #include "file_reader.h"
+#include "screen.h"
 
 extern char *store_dir;
 extern l1 *h264_to_mp4_tasks;
