@@ -49,6 +49,8 @@ void* l1_find(l1** l1_head, pthread_mutex_t *lock, int (*accept_func) (void *, v
 
 void l1_filter(l1** l1_head, pthread_mutex_t *lock, int (*filter_func) (void *, void *), void *arg) {
   l1 *p, **q;
+  if(lock != NULL)
+    pthread_mutex_lock(lock);
   for(q = l1_head; *q != NULL;) {
     if(!filter_func((*q)->value, arg)) {
       p = *q; *q = (*q)->next; free(p);
@@ -56,4 +58,6 @@ void l1_filter(l1** l1_head, pthread_mutex_t *lock, int (*filter_func) (void *, 
       q = &((*q)->next);
     }
   }
+  if(lock != NULL)
+    pthread_mutex_unlock(lock);
 }

@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -96,7 +97,7 @@ void parse_rtsp_request(struct client* client) {
   char screen_id[16];
   char session_id[64];
   char transport_protocol[16];
-  char lower_transport[16];
+  char lower_transport[16] = "UDP";
   char profile[16];
   char parameter[16];
   char line[1024];
@@ -126,14 +127,15 @@ void parse_rtsp_request(struct client* client) {
 
   session_id[0] = '\0';
   transport_protocol[0] = '\0';
-  lower_transport[0] = '\0';
+  profile[0] = '\0';
+
+  printf("START PARSE HEADERS\n");
 
   /* parse each header line */
   /* skip to next line */
-  while (*p != '\n' && *p != '\0')
-    p++;
-  if (*p == '\n')
-    p++;
+  while (*p != '\n' && *p != '\0') p++;
+  if (*p == '\n') p++;
+
   while (*p != '\0') {
     p1 = memchr(p, '\n', client->buffer - p);
     if (!p1)
@@ -151,30 +153,41 @@ void parse_rtsp_request(struct client* client) {
     line[len] = '\0';
     l = (const char *)line;
 
+    printf("Parse header line: <%s>\n", l);
+
     if(av_stristart(l, "Session:", &l)) {
       get_word_sep(session_id, sizeof(session_id), ";", &l);
     } else if (av_stristart(l, "Transport:", &l)) {
-      printf("Got transport: <%s>\n", l);
-      get_word_sep(transport_protocol, sizeof(transport_protocol), "/", &l);
-      get_word_sep(profile, sizeof(profile), "/;,", &l);
-      lower_transport[0] = '\0';
-      if(*l == '/')
-        get_word_sep(lower_transport, sizeof(lower_transport), ";,", &l);
-    } else if (av_stristart(l, "CSeq:", &l)) {
-      CSeq = strtol(l, NULL, 10);
-    }
-    while (*l != '\0' && *l != ',') {
-      get_word_sep(parameter, sizeof(parameter), "=;,", &l);
-      if (!strcmp(parameter, "client_port")) {
-        if (*l == '=') {
-          l += 1;
-          parse_range(&client_port_min, &client_port_max, &l);
+      // parse first transport
+      while(av_isspace(*l) && *l != '\0') l++;
+
+      if(*l != '\0') {
+        get_word_sep(transport_protocol, sizeof(transport_protocol), "/", &l);
+        get_word_sep(profile, sizeof(profile), "/;,", &l);
+        if(*l == '/')
+          get_word_sep(lower_transport, sizeof(lower_transport), ";,", &l);
+        if(*l == ';')
+          l++;
+        while(*l != '\0' && *l != ',') {
+          get_word_sep(parameter, sizeof(parameter), "=;,", &l);
+          if(!strcmp(parameter, "client_port")) {
+            if(*l == '=') {
+              l++;
+              parse_range(&client_port_min, &client_port_max, &l);
+            }
+          }
+          while(*l != ';' && *l != '\0' && *l != ',') l++;
+          if(*l == ';') l++;
         }
       }
+    } else if (av_stristart(l, "CSeq:", &l)) {
+      CSeq = strtol(l, NULL, 10);
     }
 
     p = p1 + 1;
   }
+
+  printf("HEADERS PARSED\n");
 
   screen_id[0] = '\0';
   av_url_split(NULL, 0, NULL, 0, NULL, 0, NULL, path, sizeof(path1), url);
@@ -184,9 +197,8 @@ void parse_rtsp_request(struct client* client) {
   }
 
   printf("url: <%s>, path: <%s>, screen_id: <%s>\n", url, path1, screen_id);
-  printf("transport_protocol: <%s>, lower_transport: <%s> client_port: %d-%d\n",
-    transport_protocol, lower_transport, client_port_min, client_port_max);
-
+  printf("transport_protocol: <%s>, profile: <%s>, lower_transport: <%s> client_port: %d-%d\n",
+    transport_protocol, profile, lower_transport, client_port_min, client_port_max);
 
   if(screen_id[0] != '\0') {
     screen = (struct screen *) l1_find(&screens, &screens_lock, &screen_find_func, screen_id);
@@ -196,14 +208,6 @@ void parse_rtsp_request(struct client* client) {
       return;
     }
   }
-
-/*
-  if(av_strcasecmp(transport_protocol, "RTP") != 0 ||
-     av_strcasecmp(lower_transport, "UDP") != 0 ) {
-    rtsp_reply_error(client, CSeq, RTSP_STATUS_TRANSPORT);
-    return;
-  }
-*/
 
   if(session_id[0] != '\0') {
     session = (struct rtsp_session *) l1_find(&sessions, &sessions_lock, &rtsp_session_find_func, session_id);
@@ -253,7 +257,16 @@ void parse_rtsp_request(struct client* client) {
       break;
 
     case SETUP:
-      sprintf(screen->rtp_context->filename, "rtp://%s:%d", "localhost", client_port_min);
+      /*
+      if(av_strcasecmp(transport_protocol, "RTP") != 0 ||
+        av_strcasecmp(lower_transport, "UDP") != 0 ) {
+        rtsp_reply_error(client, CSeq, RTSP_STATUS_TRANSPORT);
+        return;
+      }
+      */
+
+      sprintf(screen->rtp_context->filename, "rtp://%s:%d", inet_ntoa(client->from_addr.sin_addr), client_port_min);
+      printf("Streaming to <%s>\n", screen->rtp_context->filename);
 
       if((ret = avio_open(&(screen->rtp_context->pb), screen->rtp_context->filename, AVIO_FLAG_WRITE)) < 0) {
         avformat_free_context(screen->rtp_context);
@@ -276,6 +289,11 @@ void parse_rtsp_request(struct client* client) {
       break;
 
     case PLAY:
+      if(session == NULL || session->screen != screen) {
+        rtsp_reply_error(client, CSeq, RTSP_STATUS_SESSION);
+        return;
+      }
+
       if((ret = avformat_write_header(screen->rtp_context, NULL)) < 0) {
         avformat_free_context(screen->rtp_context);
         av_err_msg("avformat_write_header", ret);
@@ -292,6 +310,12 @@ void parse_rtsp_request(struct client* client) {
           error("pthread_create");
       }
 
+      FILE *f = fopen("stream.sdp", "w+");
+      sdp = screen_create_sdp(screen);
+      fwrite(sdp, 1, strlen(sdp), f);
+      fclose(f);
+      free(sdp);
+
       rtsp_reply_header(client, CSeq, RTSP_STATUS_OK);
       break;
 
@@ -302,9 +326,9 @@ void parse_rtsp_request(struct client* client) {
 }
 
 static int rtsp_session_find_func(void *value, void *arg) {
-  struct rtsp_session *session = value;
+  struct rtsp_session *session = (struct rtsp_session *)value;
   char* session_id = (char *)arg;
-  if(strcpy(session->session_id, session_id) == 0)
+  if(strcmp(session->session_id, session_id) == 0)
     return 1;
   else
     return 0;

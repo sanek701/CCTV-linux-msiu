@@ -29,6 +29,7 @@ void parse_rtsp_request(struct client* client);
 void parse_info_request(struct client* client);
 
 static void new_connection(int server_fd, int rtsp);
+int remove_dead_clients(void *value, void *arg);
 
 void event_loop() {
   struct pollfd *poll_entry;
@@ -81,7 +82,7 @@ void event_loop() {
       poll_entry++;
     }
     if(info_server_fd > 0) {
-      if(poll_table[0].revents & POLLIN)
+      if(poll_entry->revents & POLLIN)
         new_connection(info_server_fd, 0);
       poll_entry++;
     }
@@ -90,15 +91,18 @@ void event_loop() {
     for(c = clients; c != NULL; c = c->next) {
       client = (struct client *)c->value;
 
+      if(client->poll_entry == NULL)
+        continue;
       if(client->poll_entry->revents == 0)
         continue;
-      if(client->poll_entry->revents != POLLIN) {
-        fprintf(stderr, "Error! revents != POLLIN\n");
+      if(client->poll_entry->revents & (POLLERR | POLLHUP)) {
+        client->alive = 0;
         continue;
       }
 
       // read loop
       do {
+        // leave 1 byte for '\0'
         rc = recv(client->fd, client->buf_ptr, client->buf_end - client->buf_ptr, 0);
         if(rc < 0) {
           if(errno == EINTR) continue;
@@ -127,10 +131,14 @@ void event_loop() {
         if((ptr >= client->buffer + 2 && !strncmp(ptr - 2, "\n\n", 2)) ||
            (ptr >= client->buffer + 4 && !strncmp(ptr - 4, "\r\n\r\n", 4))) {
 
+          *client->buf_ptr = '\0';
+
           if(client->rtsp)
             parse_rtsp_request(client);
           else
             parse_info_request(client);
+
+          client->buf_ptr = client->buffer;
           break;
         }
         
@@ -138,12 +146,11 @@ void event_loop() {
           break;
       } while(rc > 0);
 
-      if(!client->alive) {
-        printf("Closing connection - %d\n", client->fd);
-        close(client->fd);
-        l1_remove(&clients, NULL, client);
-      }
+      client->poll_entry = NULL;
     }
+
+    // clear dead connections
+    l1_filter(&clients, NULL, &remove_dead_clients, NULL);
   }
 }
 
@@ -152,7 +159,7 @@ static void new_connection(int server_fd, int rtsp) {
   struct client *client;
   unsigned address_length = sizeof(struct sockaddr_in);
   int client_fd, flags;
-  char types[2][4] = {"INFO", "RTSP"};
+  char types[2][5] = {"INFO", "RTSP"};
 
   do {
     if((client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &address_length)) < 0) {
@@ -169,6 +176,7 @@ static void new_connection(int server_fd, int rtsp) {
 
     client = (struct client *)malloc(sizeof(struct client));
     client->fd = client_fd;
+    client->poll_entry = NULL;
     client->buf_ptr = client->buffer;
     client->buf_end = client->buf_ptr + BUF_SIZE - 1;
     client->rtsp = rtsp;
@@ -191,6 +199,19 @@ void snd(struct client *client, char *buffer) {
 
 void event_loop_stop() {
 
+}
+
+int remove_dead_clients(void *value, void *arg) {
+  struct client *client = (struct client *)value;
+
+  if(!client->alive) {
+    printf("Closing connection - %d\n", client->fd);
+    close(client->fd);
+    free(client);
+    return 0;
+  } else {
+    return 1;
+  }
 }
 
 static void check_disk_space() {

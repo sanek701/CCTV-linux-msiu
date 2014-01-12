@@ -64,8 +64,9 @@ static struct camera** get_cams_by_ids(int *cam_ids, int ncams) {
   return cams;
 }
 
-void parse_info_request(struct client *client, char *buf) {
+void parse_info_request(struct client *client) {
   json_settings settings;
+  char buf[1024];
   char error[256];
   int i, j;
 
@@ -81,11 +82,11 @@ void parse_info_request(struct client *client, char *buf) {
   struct statvfs statvfs_buf;
 
   memset(&settings, 0, sizeof (json_settings));
-  json_value *json = json_parse_ex(&settings, buf, strlen(buf), error);
+  json_value *json = json_parse_ex(&settings, client->buffer, strlen(client->buffer), error);
 
   if(json == NULL) {
     fprintf(stderr, "Json error: %s\n", error);
-    fprintf(stderr, "buffer: %s\n", buf);
+    fprintf(stderr, "buffer: %s\n", client->buffer);
   }
 
   for(i=0; i < json->u.object.length; i++) {
