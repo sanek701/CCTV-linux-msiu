@@ -108,15 +108,16 @@ void parse_rtsp_request(struct client* client) {
   int method, CSeq = 0;
   int ret;
   int len;
+  int rcvd = strlen(client->buffer);
 
   char out[128];
   char *sdp = NULL;
   struct rtsp_session *session = NULL;
   struct screen *screen = NULL;
 
-  printf("------->\n");
-  printf("%s", client->buffer);
-  printf("<-------\n");
+  //printf("------->\n");
+  //printf("%s", client->buffer);
+  //printf("<-------\n");
 
   get_word(cmd, sizeof(cmd), &p);
   get_word(url, sizeof(url), &p);
@@ -129,23 +130,26 @@ void parse_rtsp_request(struct client* client) {
   transport_protocol[0] = '\0';
   profile[0] = '\0';
 
-  printf("START PARSE HEADERS\n");
-
   /* parse each header line */
   /* skip to next line */
   while (*p != '\n' && *p != '\0') p++;
   if (*p == '\n') p++;
 
   while (*p != '\0') {
-    p1 = memchr(p, '\n', client->buffer - p);
+    p1 = memchr(p, '\n', rcvd - (p - client->buffer));
     if (!p1)
       break;
+
     p2 = p1;
     if (p2 > p && p2[-1] == '\r')
       p2--;
+
     /* skip empty line */
-    if (p2 == p)
-      break;
+    if (p2 == p) {
+      p = p1 + 1;
+      continue;
+    }
+
     len = p2 - p;
     if (len > sizeof(line) - 1)
       len = sizeof(line) - 1;
@@ -153,7 +157,7 @@ void parse_rtsp_request(struct client* client) {
     line[len] = '\0';
     l = (const char *)line;
 
-    printf("Parse header line: <%s>\n", l);
+    //printf("Parse header line: <%s>\n", line);
 
     if(av_stristart(l, "Session:", &l)) {
       get_word_sep(session_id, sizeof(session_id), ";", &l);
@@ -186,8 +190,6 @@ void parse_rtsp_request(struct client* client) {
 
     p = p1 + 1;
   }
-
-  printf("HEADERS PARSED\n");
 
   screen_id[0] = '\0';
   av_url_split(NULL, 0, NULL, 0, NULL, 0, NULL, path, sizeof(path1), url);
@@ -268,9 +270,10 @@ void parse_rtsp_request(struct client* client) {
       sprintf(screen->rtp_context->filename, "rtp://%s:%d", inet_ntoa(client->from_addr.sin_addr), client_port_min);
       printf("Streaming to <%s>\n", screen->rtp_context->filename);
 
-      if((ret = avio_open(&(screen->rtp_context->pb), screen->rtp_context->filename, AVIO_FLAG_WRITE)) < 0) {
+      if((ret = avio_open(&screen->rtp_context->pb, screen->rtp_context->filename, AVIO_FLAG_WRITE)) < 0) {
         avformat_free_context(screen->rtp_context);
         av_err_msg("avio_open", ret);
+        rtsp_reply_error(client, CSeq, RTSP_STATUS_SESSION);
         return;
       }
 
@@ -310,17 +313,13 @@ void parse_rtsp_request(struct client* client) {
           error("pthread_create");
       }
 
-      FILE *f = fopen("stream.sdp", "w+");
-      sdp = screen_create_sdp(screen);
-      fwrite(sdp, 1, strlen(sdp), f);
-      fclose(f);
-      free(sdp);
-
       rtsp_reply_header(client, CSeq, RTSP_STATUS_OK);
+      snd(client, "\r\n");
       break;
 
     case TEARDOWN:
-
+      rtsp_reply_header(client, CSeq, RTSP_STATUS_OK);
+      snd(client, "\r\n");
       break;
   }
 }

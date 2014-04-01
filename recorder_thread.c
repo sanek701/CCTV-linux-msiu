@@ -40,7 +40,7 @@ static int open_camera(struct camera *cam) {
   return 0;
 }
 
-static AVStream* copy_ctx_from_input(AVFormatContext *s, struct camera *cam) {
+AVStream* copy_ctx_from_input(AVFormatContext *s, struct camera *cam) {
   int ret;
   AVStream* ost = avformat_new_stream(s, (AVCodec *)cam->codec->codec);
   if(ost == NULL) {
@@ -316,7 +316,10 @@ void *recorder_thread(void *ptr) {
           continue;
 
         if(consumer->screen->tmpl_size == 1) {
-          packet.stream_index = consumer->screen->rtp_stream->id;
+          packet.stream_index = 0;
+          //printf("Consumer <screen_id: %s stream_index: %d>\n", consumer->screen->screen_id, consumer->screen->rtp_stream->id);
+          //printf("Stream to <%s>\n", consumer->screen->rtp_context->filename);
+
           if((ret = av_write_frame(consumer->screen->rtp_context, &packet)) < 0)
             av_err_msg("av_write_frame", ret);
         } else {

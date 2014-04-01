@@ -2,3 +2,4 @@ config.txt
 dead_code.c
 test.c
 a.out
+doc/

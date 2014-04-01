@@ -4,6 +4,7 @@
 #include <libswscale/swscale.h>
 
 int screen_open_video_file(struct screen *screen);
+AVStream* copy_ctx_from_input(AVFormatContext *s, struct camera *cam);
 static int init_single_camera_screen(struct screen *screen);
 static int init_multiple_camera_screen(struct screen *screen);
 
@@ -116,43 +117,31 @@ char* screen_create_sdp(struct screen *screen) {
   return sdp;
 }
 
-static int init_rtp_stream(struct screen *screen, AVCodecContext *codec) {
+static AVFormatContext* init_rtp_context(struct screen *screen) {
   AVFormatContext *rtp_context;
   AVOutputFormat *rtp_fmt;
-  AVStream *rtp_stream;
-  int ret;
 
   rtp_context = avformat_alloc_context();
   rtp_fmt = av_guess_format("rtp", NULL, NULL);
   if(rtp_fmt == NULL) {
     av_err_msg("av_guess_format", 0);
-    return -1;
+    avformat_free_context(rtp_context);
+    return NULL;
   }
-  rtp_context->oformat = rtp_fmt;
 
+  rtp_context->oformat = rtp_fmt;
   strcpy(rtp_context->filename, "rtp://0.0.0.0");
 
-  rtp_stream = avformat_new_stream(rtp_context, (AVCodec *)codec->codec);
-  if(rtp_stream == NULL) {
-    avformat_free_context(rtp_context);
-    av_err_msg("avformat_new_stream", 0);
-    return -1;
-  }
-  if((ret = avcodec_copy_context(rtp_stream->codec, (const AVCodecContext *)codec)) < 0) {
-    avformat_free_context(rtp_context);
-    av_err_msg("avcodec_copy_context", ret);
-    return -1;
-  }
-  
-  screen->rtp_context = rtp_context;
-  screen->rtp_stream = rtp_stream;
-  return 0;
+  return rtp_context;
 }
 
 static int init_single_camera_screen(struct screen *screen) {
   struct camera *cam = screen->cams[0];
 
-  if(init_rtp_stream(screen, cam->codec) < 0)
+  screen->rtp_context = init_rtp_context(screen);
+  screen->rtp_stream = copy_ctx_from_input(screen->rtp_context, cam);
+
+  if(screen->rtp_context == NULL || screen->rtp_stream == NULL)
     return -1;
 
   return 0;
@@ -260,8 +249,10 @@ int screen_open_video_file(struct screen *screen) {
     }
   }
 
-  if(screen->rtp_context == NULL)
-    init_rtp_stream(screen, input_stream->codec);
+  if(screen->rtp_context == NULL) {
+    screen->rtp_context = init_rtp_context(screen);
+    if(screen->rtp_context == NULL) return -1;
+  }
 
   struct in_out_cpy *io = (struct in_out_cpy*)malloc(sizeof(struct in_out_cpy));
   io->in_ctx = s;
