@@ -13,6 +13,7 @@ char *store_dir;
 
 extern int terminate_h264_to_mp4_service;
 extern pthread_mutex_t screens_lock;
+extern pthread_mutex_t clients_lock;
 extern l1 *screens;
 
 void terminate(int signal) {
@@ -49,12 +50,13 @@ char* random_string(int len) {
 }
 
 int main(int argc, char** argv) {
-  if(argc < 2) {
-    fprintf(stderr, "specify config file\n");
-    exit(EXIT_FAILURE);
-  }
+  //if(argc < 2) {
+  //  fprintf(stderr, "specify config file\n");
+  //  exit(EXIT_FAILURE);
+  //}
 
   signal(SIGINT, terminate);
+  signal(SIGPIPE, SIG_IGN);
 
   //av_log_set_level(AV_LOG_DEBUG);
   av_register_all();
@@ -63,7 +65,7 @@ int main(int argc, char** argv) {
 
   fprintf(stderr, "FFmpeg initialized\n");
 
-  db_init_pg_conn(argv[1]);
+  db_init_pg_conn("config.txt");
 
   cameras = db_select_cameras(&n_cameras);
 
@@ -81,6 +83,11 @@ int main(int argc, char** argv) {
     exit(EXIT_FAILURE);
   }
 
+  if(pthread_mutex_init(&clients_lock, NULL) < 0) {
+    fprintf(stderr, "pthread_mutex_init failed\n");
+    exit(EXIT_FAILURE);
+  }
+
   info_server_start();
   rtsp_server_start();
   
@@ -89,12 +96,6 @@ int main(int argc, char** argv) {
     error("pthread_create");
 
   event_loop();
-
-  struct screen *screen;
-  while((screen = (struct screen *)l1_shift(&screens, &screens_lock)) != NULL) {
-    screen_destroy(screen);
-  }
-  pthread_mutex_destroy(&screens_lock);
 
   for(int i=0; i < n_cameras; i++) {
     pthread_join(threads[i], NULL);
@@ -113,6 +114,9 @@ int main(int argc, char** argv) {
   avformat_network_deinit();
   db_close_pg_conn();
   event_loop_stop();
+  
+  pthread_mutex_destroy(&clients_lock);
+  pthread_mutex_destroy(&screens_lock);
 
   fprintf(stderr, "Terminated.\n");
   return (EXIT_SUCCESS);

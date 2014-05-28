@@ -19,6 +19,7 @@ int rtsp_server_fd = -1;
 int info_server_fd = -1;
 
 static l1 *clients = NULL;
+pthread_mutex_t clients_lock;
 static struct pollfd poll_table[2 + MAX_RTSP_CLIENTS + MAX_INFO_CLIENTS];
 static int nfds = 0;
 
@@ -30,6 +31,7 @@ void parse_info_request(struct client* client);
 
 static void new_connection(int server_fd, int rtsp);
 int remove_dead_clients(void *value, void *arg);
+void rtsp_remove_session_by_client(struct client *client);
 
 void event_loop() {
   struct pollfd *poll_entry;
@@ -150,7 +152,7 @@ void event_loop() {
     }
 
     // clear dead connections
-    l1_filter(&clients, NULL, &remove_dead_clients, NULL);
+    l1_filter(&clients, &clients_lock, &remove_dead_clients, NULL);
   }
 }
 
@@ -182,12 +184,14 @@ static void new_connection(int server_fd, int rtsp) {
     client->rtsp = rtsp;
     client->alive = 1;
     memcpy(&client->from_addr, &client_addr, address_length);
-    l1_insert(&clients, NULL, client);
+    l1_insert(&clients, &clients_lock, client);
   } while(client_fd >= 0);
 }
 
 void snd(struct client *client, char *buffer) {
   int rc;
+  if(!client->alive)
+    return;
   if(client->rtsp)
     printf("RTSP OUT: %s", buffer);
   rc = send(client->fd, buffer, strlen(buffer), 0);
@@ -198,7 +202,13 @@ void snd(struct client *client, char *buffer) {
 }
 
 void event_loop_stop() {
-
+  l1 *c;
+  struct client *client;
+  for(c = clients; c != NULL; c = c->next) {
+    client = (struct client *)c->value;
+    client->alive = 0;
+  }
+  l1_filter(&clients, &clients_lock, &remove_dead_clients, NULL);
 }
 
 int remove_dead_clients(void *value, void *arg) {
@@ -206,6 +216,10 @@ int remove_dead_clients(void *value, void *arg) {
 
   if(!client->alive) {
     printf("Closing connection - %d\n", client->fd);
+
+    if(client->rtsp)
+      rtsp_remove_session_by_client(client);
+
     close(client->fd);
     free(client);
     return 0;

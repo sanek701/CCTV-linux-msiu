@@ -84,6 +84,7 @@ void screen_destroy(struct screen *screen) {
   screen->active = 0;
 
   if(screen->type == REAL) {
+    printf("remove consumers for %d cams\n", screen->ncams);
     for(int i=0; i < screen->ncams; i++) {
       l1_filter(&screen->cams[i]->cam_consumers_list, &screen->cams[i]->consumers_lock, &remove_screen_counsumers, screen);
     }
@@ -158,7 +159,7 @@ static int init_multiple_camera_screen(struct screen *screen) {
   rtp_context = avformat_alloc_context();
   rtp_fmt = av_guess_format("rtp", NULL, NULL);
 
-  codec = avcodec_find_encoder(CODEC_ID_H264);
+  codec = avcodec_find_encoder(AV_CODEC_ID_H264);
 
   if(rtp_fmt == NULL) {
     avformat_free_context(rtp_context);
@@ -182,10 +183,10 @@ static int init_multiple_camera_screen(struct screen *screen) {
   c->codec_id = CODEC_ID_H264;
   c->width = SCREEN_WIDTH;
   c->height = SCREEN_HEIGHT;
-  c->pix_fmt = PIX_FMT_YUV420P;
+  c->pix_fmt = AV_PIX_FMT_YUV420P;
   c->time_base.den = 3;
   c->time_base.num = 1;
-  c->gop_size = 12;
+  c->gop_size = 10;
 
   if((ret = avcodec_open2(c, codec, NULL)) < 0) {
     avformat_free_context(rtp_context);

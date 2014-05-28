@@ -317,9 +317,6 @@ void *recorder_thread(void *ptr) {
 
         if(consumer->screen->tmpl_size == 1) {
           packet.stream_index = 0;
-          //printf("Consumer <screen_id: %s stream_index: %d>\n", consumer->screen->screen_id, consumer->screen->rtp_stream->id);
-          //printf("Stream to <%s>\n", consumer->screen->rtp_context->filename);
-
           if((ret = av_write_frame(consumer->screen->rtp_context, &packet)) < 0)
             av_err_msg("av_write_frame", ret);
         } else {

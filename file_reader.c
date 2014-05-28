@@ -193,6 +193,7 @@ void* multiple_cameras_thread(void *ptr) {
     if(!screen->active)
       break;
 
+    av_init_packet(&pkt);
     pkt.data = NULL; // packet data will be allocated by the encoder
     pkt.size = 0;
 
@@ -221,8 +222,9 @@ void* multiple_cameras_thread(void *ptr) {
         return NULL;
       }
     }
-
+    
     frame_num += 1;
+    frame->pts = frame_num;
     pts = frame_num * c->time_base.num * AV_TIME_BASE / c->time_base.den;
     now = av_gettime() - start_time;
 

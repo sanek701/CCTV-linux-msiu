@@ -49,6 +49,7 @@ enum RTSPMethod {
 struct rtsp_session {
   char *session_id;
   struct screen *screen;
+  struct client *client;
 };
 
 extern int rtsp_server_fd;
@@ -58,6 +59,7 @@ extern pthread_mutex_t screens_lock;
 static int  rtsp_session_find_func(void *value, void *arg);
 static void rtsp_reply_header(struct client *client, int CSeq, enum RTSPStatusCode error_number);
 static void rtsp_reply_error(struct client *client, int CSeq, enum RTSPStatusCode error_number);
+void rtsp_remove_session_by_client(struct client *client);
 
 static l1 *sessions = NULL;
 static pthread_mutex_t sessions_lock;
@@ -280,6 +282,7 @@ void parse_rtsp_request(struct client* client) {
       session = (struct rtsp_session *)malloc(sizeof(struct rtsp_session));
       session->session_id = random_string(8);
       session->screen = screen;
+      session->client = client;
 
       l1_insert(&sessions, &sessions_lock, session);
 
@@ -318,6 +321,7 @@ void parse_rtsp_request(struct client* client) {
       break;
 
     case TEARDOWN:
+      rtsp_remove_session_by_client(client);
       rtsp_reply_header(client, CSeq, RTSP_STATUS_OK);
       snd(client, "\r\n");
       break;
@@ -383,4 +387,21 @@ static void rtsp_reply_header(struct client *client, int CSeq, enum RTSPStatusCo
 static void rtsp_reply_error(struct client *client, int CSeq, enum RTSPStatusCode error_number) {
   rtsp_reply_header(client, CSeq, error_number);
   snd(client, "\r\n");
+}
+
+static int session_filter_func(void *value, void *arg) {
+  struct rtsp_session *session = (struct rtsp_session *)value;
+  if(session->client == (struct client *)arg) {
+    printf("removing session: %s\n", session->session_id);
+    if(session->screen != NULL)
+      printf("removing screen ncams: %d\n", session->screen->ncams);
+      screen_remove(session->screen);
+    return 0;
+  }
+  return 1;
+}
+
+void rtsp_remove_session_by_client(struct client *client) {
+  printf("rtsp_remove_session_by_client\n");
+  l1_filter(&sessions, &sessions_lock, &session_filter_func, client);
 }
